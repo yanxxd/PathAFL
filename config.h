@@ -19,9 +19,14 @@
 
 #include "types.h"
 
-/* Version string: */
+#define PATH_HASH
 
+/* Version string: */
+#ifdef PATH_HASH
+#define VERSION             "2.52b-Path"
+#else
 #define VERSION             "2.52b"
+#endif
 
 /******************************************************
  *                                                    *
@@ -49,7 +54,7 @@
 
 /* Default memory limit for child process (MB): */
 
-#ifndef __x86_64__ 
+#ifndef __x86_64__
 #  define MEM_LIMIT         25
 #else
 #  define MEM_LIMIT         50
@@ -89,7 +94,7 @@
 #define HAVOC_MIN           16
 
 /* Maximum stacking for havoc-stage tweaks. The actual value is calculated
-   like this: 
+   like this:
 
    n = random between 1 and HAVOC_STACK_POW2
    stacking = 2^n

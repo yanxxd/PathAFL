@@ -31,8 +31,8 @@
 
  */
 
-#ifndef _HAVE_AFL_AS_H
-#define _HAVE_AFL_AS_H
+#ifndef _HAVE_AFL_AS_FUN_H
+#define _HAVE_AFL_AS_FUN_H
 
 #include "config.h"
 #include "types.h"
@@ -104,7 +104,7 @@
 
  */
 
-static const u8* trampoline_fmt_32 =
+static const u8* trampoline_fmt_32_fun =
 
   "\n"
   "/* --- AFL TRAMPOLINE (32-BIT) --- */\n"
@@ -117,7 +117,7 @@ static const u8* trampoline_fmt_32 =
   "movl %%ecx,  8(%%esp)\n"
   "movl %%eax, 12(%%esp)\n"
   "movl $0x%08x, %%ecx\n"
-  "call __afl_maybe_log\n"
+  "call __afl_maybe_log_fun\n"
   "movl 12(%%esp), %%eax\n"
   "movl  8(%%esp), %%ecx\n"
   "movl  4(%%esp), %%edx\n"
@@ -127,7 +127,7 @@ static const u8* trampoline_fmt_32 =
   "/* --- END --- */\n"
   "\n";
 
-static const u8* trampoline_fmt_64 =
+static const u8* trampoline_fmt_64_fun =
 
   "\n"
   "/* --- AFL TRAMPOLINE (64-BIT) --- */\n"
@@ -139,7 +139,7 @@ static const u8* trampoline_fmt_64 =
   "movq %%rcx,  8(%%rsp)\n"
   "movq %%rax, 16(%%rsp)\n"
   "movq $0x%08x, %%rcx\n"
-  "call __afl_maybe_log\n"
+  "call __afl_maybe_log_fun\n"
   "movq 16(%%rsp), %%rax\n"
   "movq  8(%%rsp), %%rcx\n"
   "movq  0(%%rsp), %%rdx\n"
@@ -148,7 +148,7 @@ static const u8* trampoline_fmt_64 =
   "/* --- END --- */\n"
   "\n";
 
-static const u8* main_payload_32 =
+static const u8* main_payload_32_fun =
 
   "\n"
   "/* --- AFL MAIN PAYLOAD (32-BIT) --- */\n"
@@ -159,7 +159,7 @@ static const u8* main_payload_32 =
   ".align 8\n"
   "\n"
 
-  "__afl_maybe_log:\n"
+  "__afl_maybe_log_fun:\n"
   "\n"
   "  lahf\n"
   "  seto %al\n"
@@ -168,14 +168,18 @@ static const u8* main_payload_32 =
   "\n"
   "  movl  __afl_area_ptr, %edx\n"
   "  testl %edx, %edx\n"
-  "  je    __afl_setup\n"
+  "  je    __afl_setup_fun\n"
   "\n"
-  "__afl_store:\n"
+  "__afl_store_fun:\n"
   "\n"
   "  /* Calculate and store hit for the code location specified in ecx. There\n"
   "     is a double-XOR way of doing this without tainting another register,\n"
   "     and we use it on 64-bit systems; but it's slower for 32-bit ones. */\n"
   "\n"
+#ifdef PATH_HASH
+  "  /* rorl $8, %edi\n */"
+  "  xorl %ecx, 65536(%edx)\n"
+#endif
 #ifndef COVERAGE_ONLY
   "  movl __afl_prev_loc, %edi\n"
   "  xorl %ecx, %edi\n"
@@ -191,7 +195,7 @@ static const u8* main_payload_32 =
   "  incb (%edx, %edi, 1)\n"
 #endif /* ^SKIP_COUNTS */
   "\n"
-  "__afl_return:\n"
+  "__afl_return_fun:\n"
   "\n"
   "  addb $127, %al\n"
   "  sahf\n"
@@ -199,12 +203,12 @@ static const u8* main_payload_32 =
   "\n"
   ".align 8\n"
   "\n"
-  "__afl_setup:\n"
+  "__afl_setup_fun:\n"
   "\n"
   "  /* Do not retry setup if we had previous failures. */\n"
   "\n"
   "  cmpb $0, __afl_setup_failure\n"
-  "  jne  __afl_return\n"
+  "  jne  __afl_return_fun\n"
   "\n"
   "  /* Map SHM, jumping to __afl_setup_abort if something goes wrong.\n"
   "     We do not save FPU/MMX/SSE registers here, but hopefully, nobody\n"
@@ -218,7 +222,7 @@ static const u8* main_payload_32 =
   "  addl  $4, %esp\n"
   "\n"
   "  testl %eax, %eax\n"
-  "  je    __afl_setup_abort\n"
+  "  je    __afl_setup_abort_fun\n"
   "\n"
   "  pushl %eax\n"
   "  call  atoi\n"
@@ -231,7 +235,7 @@ static const u8* main_payload_32 =
   "  addl  $12, %esp\n"
   "\n"
   "  cmpl $-1, %eax\n"
-  "  je   __afl_setup_abort\n"
+  "  je   __afl_setup_abort_fun\n"
   "\n"
   "  /* Store the address of the SHM region. */\n"
   "\n"
@@ -241,7 +245,7 @@ static const u8* main_payload_32 =
   "  popl %ecx\n"
   "  popl %eax\n"
   "\n"
-  "__afl_forkserver:\n"
+  "__afl_forkserver_fun:\n"
   "\n"
   "  /* Enter the fork server mode to avoid the overhead of execve() calls. */\n"
   "\n"
@@ -261,9 +265,9 @@ static const u8* main_payload_32 =
   "  addl  $12, %esp\n"
   "\n"
   "  cmpl  $4, %eax\n"
-  "  jne   __afl_fork_resume\n"
+  "  jne   __afl_fork_resume_fun\n"
   "\n"
-  "__afl_fork_wait_loop:\n"
+  "__afl_fork_wait_loop_fun:\n"
   "\n"
   "  /* Wait for parent by reading from the pipe. Abort if read fails. */\n"
   "\n"
@@ -274,7 +278,7 @@ static const u8* main_payload_32 =
   "  addl  $12, %esp\n"
   "\n"
   "  cmpl  $4, %eax\n"
-  "  jne   __afl_die\n"
+  "  jne   __afl_die_fun\n"
   "\n"
   "  /* Once woken up, create a clone of our process. This is an excellent use\n"
   "     case for syscall(__NR_clone, 0, CLONE_PARENT), but glibc boneheadedly\n"
@@ -284,8 +288,8 @@ static const u8* main_payload_32 =
   "  call fork\n"
   "\n"
   "  cmpl $0, %eax\n"
-  "  jl   __afl_die\n"
-  "  je   __afl_fork_resume\n"
+  "  jl   __afl_die_fun\n"
+  "  je   __afl_fork_resume_fun\n"
   "\n"
   "  /* In parent process: write PID to pipe, then wait for child. */\n"
   "\n"
@@ -304,7 +308,7 @@ static const u8* main_payload_32 =
   "  addl  $12, %esp\n"
   "\n"
   "  cmpl  $0, %eax\n"
-  "  jle   __afl_die\n"
+  "  jle   __afl_die_fun\n"
   "\n"
   "  /* Relay wait status to pipe, then loop back. */\n"
   "\n"
@@ -314,9 +318,9 @@ static const u8* main_payload_32 =
   "  call  write\n"
   "  addl  $12, %esp\n"
   "\n"
-  "  jmp __afl_fork_wait_loop\n"
+  "  jmp __afl_fork_wait_loop_fun\n"
   "\n"
-  "__afl_fork_resume:\n"
+  "__afl_fork_resume_fun:\n"
   "\n"
   "  /* In child process: close fds, resume execution. */\n"
   "\n"
@@ -331,14 +335,14 @@ static const u8* main_payload_32 =
   "  popl %edx\n"
   "  popl %ecx\n"
   "  popl %eax\n"
-  "  jmp  __afl_store\n"
+  "  jmp  __afl_store_fun\n"
   "\n"
-  "__afl_die:\n"
+  "__afl_die_fun:\n"
   "\n"
   "  xorl %eax, %eax\n"
   "  call _exit\n"
   "\n"
-  "__afl_setup_abort:\n"
+  "__afl_setup_abort_fun:\n"
   "\n"
   "  /* Record setup failure so that we don't keep calling\n"
   "     shmget() / shmat() over and over again. */\n"
@@ -346,20 +350,7 @@ static const u8* main_payload_32 =
   "  incb __afl_setup_failure\n"
   "  popl %ecx\n"
   "  popl %eax\n"
-  "  jmp __afl_return\n"
-  "\n"
-  ".AFL_VARS:\n"
-  "\n"
-  "  .comm   __afl_area_ptr, 4, 32\n"
-  "  .comm   __afl_setup_failure, 1, 32\n"
-#ifndef COVERAGE_ONLY
-  "  .comm   __afl_prev_loc, 4, 32\n"
-#endif /* !COVERAGE_ONLY */
-  "  .comm   __afl_fork_pid, 4, 32\n"
-  "  .comm   __afl_temp, 4, 32\n"
-  "\n"
-  ".AFL_SHM_ENV:\n"
-  "  .asciz \"" SHM_ENV_VAR "\"\n"
+  "  jmp __afl_return_fun\n"
   "\n"
   "/* --- END --- */\n"
   "\n";
@@ -378,7 +369,7 @@ static const u8* main_payload_32 =
 #  define CALL_L64(str)		"call " str "@PLT\n"
 #endif /* ^__APPLE__ */
 
-static const u8* main_payload_64 =
+static const u8* main_payload_64_fun =
 
   "\n"
   "/* --- AFL MAIN PAYLOAD (64-BIT) --- */\n"
@@ -388,7 +379,7 @@ static const u8* main_payload_64 =
   ".code64\n"
   ".align 8\n"
   "\n"
-  "__afl_maybe_log:\n"
+  "__afl_maybe_log_fun:\n"
   "\n"
 #if defined(__OpenBSD__)  || (defined(__FreeBSD__) && (__FreeBSD__ < 9))
   "  .byte 0x9f /* lahf */\n"
@@ -401,12 +392,17 @@ static const u8* main_payload_64 =
   "\n"
   "  movq  __afl_area_ptr(%rip), %rdx\n"
   "  testq %rdx, %rdx\n"
-  "  je    __afl_setup\n"
+  "  je    __afl_setup_fun\n"
   "\n"
-  "__afl_store:\n"
+  "__afl_store_fun:\n"
   "\n"
   "  /* Calculate and store hit for the code location specified in rcx. */\n"
   "\n"
+#ifdef PATH_HASH
+  //"  /* rorq $8, %rdi\n */"
+  "  xorl %ecx, 65536(%rdx)\n"
+	//"  incl 65540(%rdx)\n"
+#endif
 #ifndef COVERAGE_ONLY
   "  xorq __afl_prev_loc(%rip), %rcx\n"
   "  xorq %rcx, __afl_prev_loc(%rip)\n"
@@ -419,7 +415,7 @@ static const u8* main_payload_64 =
   "  incb (%rdx, %rcx, 1)\n"
 #endif /* ^SKIP_COUNTS */
   "\n"
-  "__afl_return:\n"
+  "__afl_return_fun:\n"
   "\n"
   "  addb $127, %al\n"
 #if defined(__OpenBSD__)  || (defined(__FreeBSD__) && (__FreeBSD__ < 9))
@@ -431,12 +427,12 @@ static const u8* main_payload_64 =
   "\n"
   ".align 8\n"
   "\n"
-  "__afl_setup:\n"
+  "__afl_setup_fun:\n"
   "\n"
   "  /* Do not retry setup if we had previous failures. */\n"
   "\n"
   "  cmpb $0, __afl_setup_failure(%rip)\n"
-  "  jne __afl_return\n"
+  "  jne __afl_return_fun\n"
   "\n"
   "  /* Check out if we have a global pointer on file. */\n"
   "\n"
@@ -447,12 +443,12 @@ static const u8* main_payload_64 =
   "  movq  __afl_global_area_ptr(%rip), %rdx\n"
 #endif /* !^__APPLE__ */
   "  testq %rdx, %rdx\n"
-  "  je    __afl_setup_first\n"
+  "  je    __afl_setup_first_fun\n"
   "\n"
   "  movq %rdx, __afl_area_ptr(%rip)\n"
-  "  jmp  __afl_store\n"
+  "  jmp  __afl_store_fun\n"
   "\n"
-  "__afl_setup_first:\n"
+  "__afl_setup_first_fun:\n"
   "\n"
   "  /* Save everything that is not yet saved and that may be touched by\n"
   "     getenv() and several other libcalls we'll be relying on. */\n"
@@ -499,7 +495,7 @@ static const u8* main_payload_64 =
   CALL_L64("getenv")
   "\n"
   "  testq %rax, %rax\n"
-  "  je    __afl_setup_abort\n"
+  "  je    __afl_setup_abort_fun\n"
   "\n"
   "  movq  %rax, %rdi\n"
   CALL_L64("atoi")
@@ -510,7 +506,7 @@ static const u8* main_payload_64 =
   CALL_L64("shmat")
   "\n"
   "  cmpq $-1, %rax\n"
-  "  je   __afl_setup_abort\n"
+  "  je   __afl_setup_abort_fun\n"
   "\n"
   "  /* Store the address of the SHM region. */\n"
   "\n"
@@ -525,7 +521,7 @@ static const u8* main_payload_64 =
 #endif /* ^__APPLE__ */
   "  movq %rax, %rdx\n"
   "\n"
-  "__afl_forkserver:\n"
+  "__afl_forkserver_fun:\n"
   "\n"
   "  /* Enter the fork server mode to avoid the overhead of execve() calls. We\n"
   "     push rdx (area ptr) twice to keep stack alignment neat. */\n"
@@ -544,9 +540,9 @@ static const u8* main_payload_64 =
   CALL_L64("write")
   "\n"
   "  cmpq $4, %rax\n"
-  "  jne  __afl_fork_resume\n"
+  "  jne  __afl_fork_resume_fun\n"
   "\n"
-  "__afl_fork_wait_loop:\n"
+  "__afl_fork_wait_loop_fun:\n"
   "\n"
   "  /* Wait for parent by reading from the pipe. Abort if read fails. */\n"
   "\n"
@@ -555,7 +551,7 @@ static const u8* main_payload_64 =
   "  movq $" STRINGIFY(FORKSRV_FD) ", %rdi             /* file desc */\n"
   CALL_L64("read")
   "  cmpq $4, %rax\n"
-  "  jne  __afl_die\n"
+  "  jne  __afl_die_fun\n"
   "\n"
   "  /* Once woken up, create a clone of our process. This is an excellent use\n"
   "     case for syscall(__NR_clone, 0, CLONE_PARENT), but glibc boneheadedly\n"
@@ -564,8 +560,8 @@ static const u8* main_payload_64 =
   "\n"
   CALL_L64("fork")
   "  cmpq $0, %rax\n"
-  "  jl   __afl_die\n"
-  "  je   __afl_fork_resume\n"
+  "  jl   __afl_die_fun\n"
+  "  je   __afl_fork_resume_fun\n"
   "\n"
   "  /* In parent process: write PID to pipe, then wait for child. */\n"
   "\n"
@@ -581,7 +577,7 @@ static const u8* main_payload_64 =
   "  movq __afl_fork_pid(%rip), %rdi /* PID       */\n"
   CALL_L64("waitpid")
   "  cmpq $0, %rax\n"
-  "  jle  __afl_die\n"
+  "  jle  __afl_die_fun\n"
   "\n"
   "  /* Relay wait status to pipe, then loop back. */\n"
   "\n"
@@ -590,9 +586,9 @@ static const u8* main_payload_64 =
   "  movq $" STRINGIFY((FORKSRV_FD + 1)) ", %rdi         /* file desc */\n"
   CALL_L64("write")
   "\n"
-  "  jmp  __afl_fork_wait_loop\n"
+  "  jmp  __afl_fork_wait_loop_fun\n"
   "\n"
-  "__afl_fork_resume:\n"
+  "__afl_fork_resume_fun:\n"
   "\n"
   "  /* In child process: close fds, resume execution. */\n"
   "\n"
@@ -636,14 +632,14 @@ static const u8* main_payload_64 =
   "\n"
   "  leaq 352(%rsp), %rsp\n"
   "\n"
-  "  jmp  __afl_store\n"
+  "  jmp  __afl_store_fun\n"
   "\n"
-  "__afl_die:\n"
+  "__afl_die_fun:\n"
   "\n"
   "  xorq %rax, %rax\n"
   CALL_L64("_exit")
   "\n"
-  "__afl_setup_abort:\n"
+  "__afl_setup_abort_fun:\n"
   "\n"
   "  /* Record setup failure so that we don't keep calling\n"
   "     shmget() / shmat() over and over again. */\n"
@@ -681,39 +677,9 @@ static const u8* main_payload_64 =
   "\n"
   "  leaq 352(%rsp), %rsp\n"
   "\n"
-  "  jmp __afl_return\n"
-  "\n"
-  ".AFL_VARS:\n"
-  "\n"
-
-#ifdef __APPLE__
-
-  "  .comm   __afl_area_ptr, 8\n"
-#ifndef COVERAGE_ONLY
-  "  .comm   __afl_prev_loc, 8\n"
-#endif /* !COVERAGE_ONLY */
-  "  .comm   __afl_fork_pid, 4\n"
-  "  .comm   __afl_temp, 4\n"
-  "  .comm   __afl_setup_failure, 1\n"
-
-#else
-
-  "  .lcomm   __afl_area_ptr, 8\n"
-#ifndef COVERAGE_ONLY
-  "  .lcomm   __afl_prev_loc, 8\n"
-#endif /* !COVERAGE_ONLY */
-  "  .lcomm   __afl_fork_pid, 4\n"
-  "  .lcomm   __afl_temp, 4\n"
-  "  .lcomm   __afl_setup_failure, 1\n"
-
-#endif /* ^__APPLE__ */
-
-  "  .comm    __afl_global_area_ptr, 8, 8\n"
-  "\n"
-  ".AFL_SHM_ENV:\n"
-  "  .asciz \"" SHM_ENV_VAR "\"\n"
+  "  jmp __afl_return_fun\n"
   "\n"
   "/* --- END --- */\n"
   "\n";
 
-#endif /* !_HAVE_AFL_AS_H */
+#endif /* !_HAVE_AFL_AS_FUN_H */

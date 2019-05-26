@@ -36,6 +36,9 @@
 #include "alloc-inl.h"
 
 #include "afl-as.h"
+#ifdef PATH_HASH
+#include "afl-as-fun.h"
+#endif
 
 #include <stdio.h>
 #include <unistd.h>
@@ -62,7 +65,7 @@ static u8   be_quiet,           /* Quiet mode (no stderr output)        */
 static u32  inst_ratio = 100,   /* Instrumentation probability (%)      */
             as_par_cnt = 1;     /* Number of params to 'as'             */
 
-/* If we don't find --32 or --64 in the command line, default to 
+/* If we don't find --32 or --64 in the command line, default to
    instrumentation for whichever mode we were compiled with. This is not
    perfect, but should do the trick for almost all use cases. */
 
@@ -234,6 +237,10 @@ static void add_instrumentation(void) {
 
 #endif /* __APPLE__ */
 
+#ifdef PATH_HASH
+  u8 fun_head = 0;
+#endif
+
   if (input_file) {
 
     inf = fopen(input_file, "r");
@@ -247,7 +254,7 @@ static void add_instrumentation(void) {
 
   outf = fdopen(outfd, "w");
 
-  if (!outf) PFATAL("fdopen() failed");  
+  if (!outf) PFATAL("fdopen() failed");
 
   while (fgets(line, MAX_LINE, inf)) {
 
@@ -258,6 +265,18 @@ static void add_instrumentation(void) {
 
     if (!pass_thru && !skip_intel && !skip_app && !skip_csect && instr_ok &&
         instrument_next && line[0] == '\t' && isalpha(line[1])) {
+
+#ifdef PATH_HASH
+			if (fun_head) {
+				//if (R(100) < 10)
+					fprintf(outf, use_64bit ? trampoline_fmt_64_fun : trampoline_fmt_32_fun,
+							R(MAP_SIZE));
+//				else
+//					fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
+//					              R(MAP_SIZE));
+				fun_head = 0;
+			} else
+#endif
 
       fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
               R(MAP_SIZE));
@@ -291,7 +310,7 @@ static void add_instrumentation(void) {
           !strncmp(line + 2, "section\t__TEXT,__text", 21) ||
           !strncmp(line + 2, "section __TEXT,__text", 21)) {
         instr_ok = 1;
-        continue; 
+        continue;
       }
 
       if (!strncmp(line + 2, "section\t", 8) ||
@@ -436,15 +455,25 @@ static void add_instrumentation(void) {
         /* Function label (always instrumented, deferred mode). */
 
         instrument_next = 1;
-    
+#ifdef PATH_HASH
+        fun_head = 1;
+#endif
+
       }
 
     }
 
   }
 
+#ifdef PATH_HASH
+  if (ins_lines){
+    fputs(use_64bit ? main_payload_64 : main_payload_32, outf);
+    fputs(use_64bit ? main_payload_64_fun : main_payload_32_fun, outf);
+  }
+#else
   if (ins_lines)
     fputs(use_64bit ? main_payload_64 : main_payload_32, outf);
+#endif
 
   if (input_file) fclose(inf);
   fclose(outf);
@@ -455,10 +484,10 @@ static void add_instrumentation(void) {
                           pass_thru ? " (pass-thru mode)" : "");
     else OKF("Instrumented %u locations (%s-bit, %s mode, ratio %u%%).",
              ins_lines, use_64bit ? "64" : "32",
-             getenv("AFL_HARDEN") ? "hardened" : 
+             getenv("AFL_HARDEN") ? "hardened" :
              (sanitizer ? "ASAN/MSAN" : "non-hardened"),
              inst_ratio);
- 
+
   }
 
 }
@@ -481,7 +510,7 @@ int main(int argc, char** argv) {
   if (isatty(2) && !getenv("AFL_QUIET")) {
 
     SAYF(cCYA "afl-as " cBRI VERSION cRST " by <lcamtuf@google.com>\n");
- 
+
   } else be_quiet = 1;
 
   if (argc < 2) {
@@ -509,7 +538,7 @@ int main(int argc, char** argv) {
 
   if (inst_ratio_str) {
 
-    if (sscanf(inst_ratio_str, "%u", &inst_ratio) != 1 || inst_ratio > 100) 
+    if (sscanf(inst_ratio_str, "%u", &inst_ratio) != 1 || inst_ratio > 100)
       FATAL("Bad value of AFL_INST_RATIO (must be between 0 and 100)");
 
   }
