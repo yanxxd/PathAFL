@@ -3215,12 +3215,26 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
 #ifdef PATH_HASH
-      if ( g_new_paths > (queued_paths >> 2) || R(100) < 67 )
+      if ( g_new_paths > (queued_paths >> 2) )// || R(100) < 67 )
       	return 0;
+
+      static u32 last_paths_num = 0;
+
+      if (last_paths_num != g_new_paths + queued_paths){ // found new path with cov
+      	last_paths_num = g_new_paths + queued_paths;
+      	return 0;
+      }
+
+      //time_t cur_time = time(0);
+      if (get_cur_time() - last_path_time < 3000)
+      	return 0;
+
+      // time interval > 3s and don't find new paths
       cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
       if (!has_new_path(cksum)) return 0;
       bcksum = 1;
       ++g_new_paths;
+      ++last_paths_num;
 #else
 			return 0;
 #endif
@@ -3588,8 +3602,8 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
 
 #ifdef PATH_HASH
   fprintf(plot_file,
-          "%llu, %llu, %u, %u(%u), %u, %u, %0.02f%%, %llu, %llu, %u, %0.02f\n",
-          get_cur_time() / 1000, queue_cycle - 1, current_entry, queued_paths, g_new_paths,
+          "%llu, %llu, %u, %u+%u, %u, %u, %0.02f%%, %llu, %llu, %u, %0.02f\n",
+          get_cur_time() / 1000, queue_cycle - 1, current_entry, queued_paths-g_new_paths, g_new_paths,
           pending_not_fuzzed, pending_favored, bitmap_cvg, unique_crashes,
           unique_hangs, max_depth, eps); /* ignore errors */
 #else
