@@ -104,28 +104,51 @@
 
  */
 
+#ifdef _1_PATH_HASH
 static const u8* trampoline_fmt_32_fun =
 
-  "\n"
-  "/* --- AFL TRAMPOLINE (32-BIT) --- */\n"
-  "\n"
-  ".align 4\n"
-  "\n"
-  "leal -16(%%esp), %%esp\n"
-  "movl %%edi,  0(%%esp)\n"
-  "movl %%edx,  4(%%esp)\n"
-  "movl %%ecx,  8(%%esp)\n"
-  "movl %%eax, 12(%%esp)\n"
-  "movl $0x%08x, %%ecx\n"
-  "call __afl_maybe_log_fun\n"
-  "movl 12(%%esp), %%eax\n"
-  "movl  8(%%esp), %%ecx\n"
-  "movl  4(%%esp), %%edx\n"
-  "movl  0(%%esp), %%edi\n"
-  "leal 16(%%esp), %%esp\n"
-  "\n"
-  "/* --- END --- */\n"
-  "\n";
+	"\n"
+	"/* --- AFL TRAMPOLINE (32-BIT) --- */\n"
+	"\n"
+	".align 4\n"
+	"\n"
+	"leal -12(%%esp), %%esp\n"
+	"movl %%edx,  0(%%esp)\n"
+	"movl %%ecx,  4(%%esp)\n"
+	"movl %%eax,  8(%%esp)\n"
+	"movl $0x%08x, %%ecx\n"
+	"call __afl_maybe_log\n"
+	"movl  8(%%esp), %%eax\n"
+	"movl  4(%%esp), %%ecx\n"
+	"movl  0(%%esp), %%edx\n"
+	"leal 12(%%esp), %%esp\n"
+	"\n"
+	"/* --- END --- */\n"
+	"\n";
+#else
+static const u8* trampoline_fmt_32_fun =
+
+	"\n"
+	"/* --- AFL TRAMPOLINE (32-BIT) --- */\n"
+	"\n"
+	".align 4\n"
+	"\n"
+	"leal -16(%%esp), %%esp\n"
+	"movl %%edi,  0(%%esp)\n"
+	"movl %%edx,  4(%%esp)\n"
+	"movl %%ecx,  8(%%esp)\n"
+	"movl %%eax, 12(%%esp)\n"
+	"movl $0x%08x, %%ecx\n"
+	"call __afl_maybe_log\n"
+	"movl 12(%%esp), %%eax\n"
+	"movl  8(%%esp), %%ecx\n"
+	"movl  4(%%esp), %%edx\n"
+	"movl  0(%%esp), %%edi\n"
+	"leal 16(%%esp), %%esp\n"
+	"\n"
+	"/* --- END --- */\n"
+	"\n";
+#endif //_1_PATH_HASH
 
 static const u8* trampoline_fmt_64_fun =
 
@@ -176,15 +199,21 @@ static const u8* main_payload_32_fun =
   "     is a double-XOR way of doing this without tainting another register,\n"
   "     and we use it on 64-bit systems; but it's slower for 32-bit ones. */\n"
   "\n"
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   "  /* rorl $8, %edi\n */"
   "  xorl %ecx, 65536(%edx)\n"
 #endif
 #ifndef COVERAGE_ONLY
+#ifdef _1_PATH_HASH
+	"  xorl __afl_prev_loc, %ecx\n"
+	"  xorl %ecx, __afl_prev_loc\n"
+	"  shrl $1, __afl_prev_loc\n"
+#else
   "  movl __afl_prev_loc, %edi\n"
   "  xorl %ecx, %edi\n"
   "  shrl $1, %ecx\n"
   "  movl %ecx, __afl_prev_loc\n"
+#endif //_1_PATH_HASH
 #else
   "  movl %ecx, %edi\n"
 #endif /* ^!COVERAGE_ONLY */
@@ -192,7 +221,11 @@ static const u8* main_payload_32_fun =
 #ifdef SKIP_COUNTS
   "  orb  $1, (%edx, %edi, 1)\n"
 #else
-  "  incb (%edx, %edi, 1)\n"
+#ifdef _1_PATH_HASH
+	"  incb (%edx, %ecx, 1)\n"
+#else
+	"  incb (%edx, %edi, 1)\n"
+#endif //_1_PATH_HASH
 #endif /* ^SKIP_COUNTS */
   "\n"
   "__afl_return_fun:\n"
@@ -398,7 +431,7 @@ static const u8* main_payload_64_fun =
   "\n"
   "  /* Calculate and store hit for the code location specified in rcx. */\n"
   "\n"
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   //"  /* rorq $8, %rdi\n */"
   "  xorl %ecx, 65536(%rdx)\n"
 	//"  incl 65540(%rdx)\n"

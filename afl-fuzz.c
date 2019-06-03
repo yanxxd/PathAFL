@@ -118,6 +118,7 @@ EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
            shuffle_queue,             /* Shuffle input queue?             */
            bitmap_changed = 1,        /* Time to update bitmap?           */
            qemu_mode,                 /* Running in QEMU mode?            */
+					 verbose_mode,              /* Running in verbose mode?         */
            skip_requested,            /* Skip request, via SIGUSR1        */
            run_over10m,               /* Run time over 10 minutes?        */
            persistent_mode,           /* Running in persistent mode?      */
@@ -225,6 +226,10 @@ static FILE* plot_file;               /* Gnuplot output file              */
 
 struct queue_entry {
 
+#ifdef _2_GUIDED_NEIGHBOR
+	u32 id;															/* File id										      */
+	u64 neighbor_score;									/* Neighbor score							      */
+#endif
   u8* fname;                          /* File name for the test case      */
   u32 len;                            /* Input length                     */
 
@@ -247,7 +252,7 @@ struct queue_entry {
   u8* trace_mini;                     /* Trace bytes, if kept             */
   u32 tc_ref;                         /* Trace bytes ref count            */
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   u16 path_hash;
   struct queue_entry *next_hash;			/* Next element with same path hash */
 #endif
@@ -285,7 +290,7 @@ static s8  interesting_8[]  = { INTERESTING_8 };
 static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
 static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
 static u32 g_new_paths;
 static struct queue_entry* g_path_hash[MAP_SIZE] = {0};
 #endif
@@ -332,11 +337,11 @@ enum {
 };
 
 #include <stdarg.h>	  //yan add
-#define AFL_LOG(...)  {/*if(verbose_mode)*/ afl_log_real(__VA_ARGS__);}
+#define AFL_LOG(...)  {if(verbose_mode) afl_log_real(__VA_ARGS__);}
 int afl_log_real(const char *fmt, ...)
 {
-	//if(!verbose_mode)
-		//return 0;
+//	if(!verbose_mode)
+//		return 0;
 
 	va_list argptr;
 	va_start(argptr, fmt);
@@ -362,6 +367,79 @@ int afl_log_real(const char *fmt, ...)
 	return len;
 }
 
+
+#ifdef _2_GUIDED_NEIGHBOR
+
+struct edge_neighbor {
+	unsigned short hash;						//hash of edge
+	unsigned short hash_neighbor;	//hash of neighbor edge
+	unsigned short num_call;				//num of edges neighbor edge goes through. Only count 1st layer call.
+	unsigned short num_mem;				//num of *alloc and *free function. Only count 1st layer call.
+};
+
+struct edge_neighbor *g_edge_info = NULL;
+unsigned int g_edge_info_num = 0;
+unsigned short g_edge_info_index[MAP_SIZE];
+
+static int load_edge_neighbor_file(char *fn) {
+
+	struct stat statbuf;
+	if (stat(fn, &statbuf))		PFATAL("Unable to stat '%s'", fn);
+
+	s32 fd = open(fn, O_RDONLY);
+	if (fd < 0) PFATAL("Unable to open '%s'", fn);
+
+	g_edge_info = (struct edge_neighbor*)ck_alloc(statbuf.st_size);
+	ck_read(fd, g_edge_info, statbuf.st_size, fn);
+	close(fd);
+
+	memset(g_edge_info_index, 0, sizeof(g_edge_info_index));
+	g_edge_info_num = statbuf.st_size / sizeof(struct edge_neighbor);
+
+	unsigned short last_hash = g_edge_info[0].hash;
+	g_edge_info_index[last_hash] = 0;
+
+	for(int i=1; i<g_edge_info_num; ++i){
+		if(g_edge_info[i].hash == last_hash)
+			continue;
+
+		last_hash = g_edge_info[i].hash;
+		g_edge_info_index[last_hash] = i;
+	}
+
+	return 0;
+}
+
+static void free_edge_neighbor(){
+	ck_free(g_edge_info);
+}
+
+static u64 calc_neighbor(struct queue_entry *q) {
+
+	//u16 hash;	//edge hash
+	u64 num = 0;
+
+	if(!q->trace_mini) return num; //That is unlikely to happen
+
+	for(int i = 0; i < MAP_SIZE; ++i){
+
+		if( !(q->trace_mini[i>>3] & (1<<(i&7))) )
+			continue;
+
+		for (u16 j = g_edge_info_index[i]; j < g_edge_info_num; ++j) {
+			//index is over or this neighbor has been covered
+			if (g_edge_info[j].hash != i || 0xFF != virgin_bits[g_edge_info[j].hash_neighbor])
+				break;
+
+			//num += g_edge_info[j].num_edge + 1;
+			num += 1 + (g_edge_info[j].num_call >> 1) + (g_edge_info[j].num_mem >> 4);
+		}
+	}
+
+	return num;
+}
+
+#endif
 
 /* Get unix time in milliseconds */
 
@@ -823,6 +901,12 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->depth        = cur_depth + 1;
   q->passed_det   = passed_det;
 
+#ifdef _2_GUIDED_NEIGHBOR
+  char *p = strstr(fname, "id:");
+  if(p)  q->id = atoi(p + 3);
+  else q->id = 0;
+#endif
+
   if (q->depth > max_depth) max_depth = q->depth;
 
   if (queue_top) {
@@ -986,7 +1070,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
 }
 
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
 static inline u8 has_new_path(u32 cksum) {
 
 	u16 path_hash = *(u16*)(trace_bits + MAP_SIZE);
@@ -996,12 +1080,12 @@ static inline u8 has_new_path(u32 cksum) {
 
 	return 0;
 
-	struct queue_entry* q = g_path_hash[path_hash];
-	while (q){
-		if (q->exec_cksum == cksum)
-			return 0;
-		q = q->next_hash;
-	}
+//	struct queue_entry* q = g_path_hash[path_hash];
+//	while (q){
+//		if (q->exec_cksum == cksum)
+//			return 0;
+//		q = q->next_hash;
+//	}
 
 	return 1;
 }
@@ -1317,8 +1401,10 @@ static void update_bitmap_score(struct queue_entry* q) {
             previous winner, discard its trace_bits[] if necessary. */
 
          if (!--top_rated[i]->tc_ref) {
+#if (!defined _2_GUIDED_NEIGHBOR)
            ck_free(top_rated[i]->trace_mini);
            top_rated[i]->trace_mini = 0;
+#endif
          }
 
        }
@@ -1328,15 +1414,23 @@ static void update_bitmap_score(struct queue_entry* q) {
        top_rated[i] = q;
        q->tc_ref++;
 
+#if (!defined _2_GUIDED_NEIGHBOR)
        if (!q->trace_mini) {
          q->trace_mini = ck_alloc(MAP_SIZE >> 3);
          minimize_bits(q->trace_mini, trace_bits);
        }
+#endif
 
        score_changed = 1;
 
      }
 
+#if (defined _2_GUIDED_NEIGHBOR)
+	 if (!q->trace_mini) {
+		 q->trace_mini = ck_alloc(MAP_SIZE >> 3);
+		 minimize_bits(q->trace_mini, trace_bits);
+	 }
+#endif
 }
 
 
@@ -1362,6 +1456,80 @@ static void cull_queue(void) {
   pending_favored = 0;
 
   q = queue;
+
+#if (defined _2_GUIDED_NEIGHBOR)
+
+	if (queue_cur) {
+
+		for (; q != queue_cur; q = q->next) {
+
+			if (!q->favored)
+				continue;
+			// set temp_v to zero for all the edges that the q covers
+			u32 j = MAP_SIZE >> 3;
+			while (j--)
+				if (q->trace_mini[j])
+					temp_v[j] &= ~q->trace_mini[j];
+
+			++queued_favored;
+			if (!q->was_fuzzed)		++pending_favored;
+		}
+
+		// calclate neighbor scores of 50~99 seeds from the current position,
+		// and about top 40% seeds were added into the queue.
+		u64 average = 0;
+		u64 max = 0;
+		u64 sum = 0;
+		u16 count = 0;
+		static u64 time_additional = 0;
+		u64 time_start = get_cur_time();
+
+		for (q = queue_cur; q; q = q->next) {
+
+			q->neighbor_score = (calc_neighbor(q) << 16) + q->id;
+			sum += q->neighbor_score;
+
+			if (q->neighbor_score > max)
+				max = q->neighbor_score;
+
+			++count;
+		}
+
+		if (count) {
+			average = sum / count;
+			average += (max - average) / 5;
+
+			AFL_LOG("cur=%d count=%d average=%x ", queue_cur->id, count, average);
+			count = 0;
+//			for (q = queue_cur; q && q->id < next_id; q = q->next) {
+			for (q = queue_cur; q; q = q->next) {
+
+				if (q->neighbor_score <= average) {
+					q->favored = 0;
+					continue;
+				}
+
+				u32 j = MAP_SIZE >> 3;
+				while (j--)
+					if (q->trace_mini[j])
+						temp_v[j] &= ~q->trace_mini[j];
+
+				q->favored = 1;
+				queued_favored++;
+
+				if (!q->was_fuzzed)
+					++pending_favored;
+
+				//AFL_LOG("%06d-%x ", q->id, q->neighbor_score);
+				++count;
+			}
+
+			time_additional += get_cur_time() - time_start;
+			AFL_LOG("favored=%d time_additional=%llus\n", count, time_additional/1000);
+		}
+
+	} //end of if (queue_cur)
+#endif //end of (defined _2_GUIDED_NEIGHBOR)
 
   while (q) {
     q->favored = 0;
@@ -1410,7 +1578,7 @@ EXP_ST void setup_shm(void) {
   memset(virgin_tmout, 255, MAP_SIZE);
   memset(virgin_crash, 255, MAP_SIZE);
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   shm_id = shmget(IPC_PRIVATE, MAP_SIZE + 8, IPC_CREAT | IPC_EXCL | 0600);
 #else
   shm_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
@@ -2338,7 +2506,7 @@ static u8 run_target(char** argv, u32 timeout) {
      must prevent any earlier operations from venturing into that
      territory. */
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   memset(trace_bits, 0, MAP_SIZE + 8);
 #else
   memset(trace_bits, 0, MAP_SIZE);
@@ -2655,7 +2823,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
       goto abort_calibration;
     }
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
     cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 #else
     cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
@@ -2687,7 +2855,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
         q->exec_cksum = cksum;
         memcpy(first_trace, trace_bits, MAP_SIZE);
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
         q->path_hash = *(u16*)(trace_bits + MAP_SIZE);
 #endif
 
@@ -2710,7 +2878,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   q->handicap    = handicap;
   q->cal_failed  = 0;
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   q->next_hash = g_path_hash[q->path_hash];
   g_path_hash[q->path_hash] = q;
 #endif
@@ -3202,7 +3370,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
   u8  hnb;
   s32 fd;
   u8  keeping = 0, res;
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   u8	bcksum = 0;
   u32 cksum;
 #endif
@@ -3214,27 +3382,31 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
-#ifdef PATH_HASH
-      if ( g_new_paths > (queued_paths >> 2) )// || R(100) < 67 )
+#ifdef _1_PATH_HASH
+      if ( g_new_paths > (queued_paths >> 2)  || R(100) < 67 )
       	return 0;
 
-      static u32 last_paths_num = 0;
+      // check hash when time interval > 3s and don't find new paths
+//      static u32 last_paths_num = 0;
+//
+//      if (last_paths_num != g_new_paths + queued_paths){ // found new path with cov
+//      	last_paths_num = g_new_paths + queued_paths;
+//      	return 0;
+//      }
+//
+//      time_t cur_time = time(0);
+//      if (get_cur_time() - last_path_time < 3000)
+//      	return 0;
 
-      if (last_paths_num != g_new_paths + queued_paths){ // found new path with cov
-      	last_paths_num = g_new_paths + queued_paths;
-      	return 0;
-      }
-
-      //time_t cur_time = time(0);
-      if (get_cur_time() - last_path_time < 3000)
-      	return 0;
-
-      // time interval > 3s and don't find new paths
       cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
       if (!has_new_path(cksum)) return 0;
+
+      if ( count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries)
+      	return 0;
+
       bcksum = 1;
       ++g_new_paths;
-      ++last_paths_num;
+      //++last_paths_num;
 #else
 			return 0;
 #endif
@@ -3258,7 +3430,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       queued_with_cov++;
     }
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
     queue_top->path_hash = *(u16*)(trace_bits + MAP_SIZE);
     if (bcksum)
     	queue_top->exec_cksum = cksum;
@@ -3273,8 +3445,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
     res = calibrate_case(argv, queue_top, mem, queue_cycle - 1, 0);
 
-#ifdef PATH_HASH
-    AFL_LOG("%04x %08x\n", queue_top->path_hash, *(u32*)(trace_bits + MAP_SIZE + 4));
+#ifdef _1_PATH_HASH
+    //AFL_LOG("%04x %08x\n", queue_top->path_hash, *(u32*)(trace_bits + MAP_SIZE + 4));
 #endif
 
     if (res == FAULT_ERROR)
@@ -3600,7 +3772,7 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
      favored_not_fuzzed, unique_crashes, unique_hangs, max_depth,
      execs_per_sec */
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   fprintf(plot_file,
           "%llu, %llu, %u, %u+%u, %u, %u, %0.02f%%, %llu, %llu, %u, %0.02f\n",
           get_cur_time() / 1000, queue_cycle - 1, current_entry, queued_paths-g_new_paths, g_new_paths,
@@ -4129,7 +4301,7 @@ static void show_stats(void) {
 
   /* "Handy" shortcuts for drawing boxes... */
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
 #define bSTG    bSTART "\x1b[0;93m"
 #else
 #define bSTG    bSTART cGRA
@@ -4144,7 +4316,7 @@ static void show_stats(void) {
 #define SP20    SP10 SP10
 
   /* Lord, forgive me this. */
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   SAYF(SET_G1 bSTG bLT bH bSTOP cCYA " process timing " bSTG bH30 bH bH2 bHB
        bH bSTOP cCYA " overall results " bSTG bH5 bH2 bH2 bRT "\n");
 #else
@@ -4174,7 +4346,7 @@ static void show_stats(void) {
     else strcpy(tmp, cLBL);
 
   }
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   SAYF(bV bSTOP "        run time : " cRST "%-30s " bSTG bV bSTOP
        "  cycles done : %s%-5s      " bSTG bV "\n",
        DTD(cur_ms, start_time), tmp, DI(queue_cycle - 1));
@@ -4207,7 +4379,7 @@ static void show_stats(void) {
 
   }
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   SAYF("\b\b\b\b" bSTG bV bSTOP "  total paths : " cRST "%-5s+%-5s" bSTG bV "\n",
        DI(queued_paths-g_new_paths), DI(g_new_paths));
 #else
@@ -4221,7 +4393,7 @@ static void show_stats(void) {
   sprintf(tmp, "%s%s", DI(unique_crashes),
           (unique_crashes >= KEEP_UNIQUE_CRASH) ? "+" : "");
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   SAYF(bV bSTOP " last uniq crash : " cRST "%-30s " bSTG bV bSTOP
        " uniq crashes : %s%-6s     " bSTG bV "\n",
        DTD(cur_ms, last_crash_time), unique_crashes ? cLRD : cRST,
@@ -4236,7 +4408,7 @@ static void show_stats(void) {
   sprintf(tmp, "%s%s", DI(unique_hangs),
          (unique_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   SAYF(bV bSTOP "  last uniq hang : " cRST "%-30s " bSTG bV bSTOP
        "   uniq hangs : " cRST "%-6s     " bSTG bV "\n",
        DTD(cur_ms, last_hang_time), tmp);
@@ -4671,7 +4843,7 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
 
       /* Note that we don't keep track of crashes or hangs here; maybe TODO? */
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
       cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 #else
       cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
@@ -5313,7 +5485,7 @@ static u8 fuzz_one(char** argv) {
 
     if (!dumb_mode && (stage_cur & 7) == 7) {
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
     	u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 #else
     	u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
@@ -5473,7 +5645,7 @@ static u8 fuzz_one(char** argv) {
          without wasting time on checksums. */
 
       if (!dumb_mode && len >= EFF_MIN_LEN)
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
         cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 #else
         cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
@@ -7888,6 +8060,10 @@ int main(int argc, char** argv) {
   struct timeval tv;
   struct timezone tz;
 
+#ifdef _2_GUIDED_NEIGHBOR
+  char *fn_neighbor = 0;
+#endif
+
   SAYF(cCYA "afl-fuzz " cBRI VERSION cRST " by <lcamtuf@google.com>\n");
 
   doc_path = access(DOC_PATH, F_OK) ? "docs" : DOC_PATH;
@@ -7895,7 +8071,11 @@ int main(int argc, char** argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
+#ifdef _2_GUIDED_NEIGHBOR
+  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qvh:")) > 0)
+#else
   while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Q")) > 0)
+#endif
 
     switch (opt) {
 
@@ -8063,6 +8243,18 @@ int main(int argc, char** argv) {
 
         break;
 
+      case 'v':
+      	verbose_mode = 1;
+      	break;
+
+#ifdef _2_GUIDED_NEIGHBOR
+
+      case 'h':
+        if (fn_neighbor) FATAL("Multiple -x options not supported");
+        fn_neighbor = optarg;
+      	break;
+#endif
+
       default:
 
         usage(argv[0]);
@@ -8151,6 +8343,11 @@ int main(int argc, char** argv) {
     use_argv = argv + optind;
 
   perform_dry_run(use_argv);
+
+#ifdef _2_GUIDED_NEIGHBOR
+  if(fn_neighbor)
+  	load_edge_neighbor_file(fn_neighbor);
+#endif
 
   cull_queue();
 
@@ -8257,6 +8454,11 @@ stop_fuzzing:
   destroy_extras();
   ck_free(target_path);
   ck_free(sync_id);
+
+#ifdef _2_GUIDED_NEIGHBOR
+  if(fn_neighbor)
+  	free_edge_neighbor(fn_neighbor);
+#endif
 
   alloc_report();
 

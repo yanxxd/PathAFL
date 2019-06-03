@@ -36,7 +36,7 @@
 #include "alloc-inl.h"
 
 #include "afl-as.h"
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
 #include "afl-as-fun.h"
 #endif
 
@@ -237,7 +237,7 @@ static void add_instrumentation(void) {
 
 #endif /* __APPLE__ */
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   u8 fun_head = 0;
 #endif
 
@@ -266,7 +266,7 @@ static void add_instrumentation(void) {
     if (!pass_thru && !skip_intel && !skip_app && !skip_csect && instr_ok &&
         instrument_next && line[0] == '\t' && isalpha(line[1])) {
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
 			if (fun_head) {
 				//if (R(100) < 10)
 					fprintf(outf, use_64bit ? trampoline_fmt_64_fun : trampoline_fmt_32_fun,
@@ -288,9 +288,13 @@ static void add_instrumentation(void) {
 
     /* Output the actual line, call it a day in pass-thru mode. */
 
+#ifdef _2_GUIDED_NEIGHBOR
+    if (pass_thru) OUTPUT_CONTINUE
+#else
     fputs(line, outf);
 
     if (pass_thru) continue;
+#endif
 
     /* All right, this is where the actual fun begins. For one, we only want to
        instrument the .text section. So, let's keep track of that in processed
@@ -310,7 +314,11 @@ static void add_instrumentation(void) {
           !strncmp(line + 2, "section\t__TEXT,__text", 21) ||
           !strncmp(line + 2, "section __TEXT,__text", 21)) {
         instr_ok = 1;
+#ifdef _2_GUIDED_NEIGHBOR
+        OUTPUT_CONTINUE
+#else
         continue;
+#endif
       }
 
       if (!strncmp(line + 2, "section\t", 8) ||
@@ -318,7 +326,11 @@ static void add_instrumentation(void) {
           !strncmp(line + 2, "bss\n", 4) ||
           !strncmp(line + 2, "data\n", 5)) {
         instr_ok = 0;
+#ifdef _2_GUIDED_NEIGHBOR
+        OUTPUT_CONTINUE
+#else
         continue;
+#endif
       }
 
     }
@@ -374,7 +386,12 @@ static void add_instrumentation(void) {
      */
 
     if (skip_intel || skip_app || skip_csect || !instr_ok ||
-        line[0] == '#' || line[0] == ' ') continue;
+        line[0] == '#' || line[0] == ' ')
+#ifdef _2_GUIDED_NEIGHBOR
+        OUTPUT_CONTINUE
+#else
+        continue;
+#endif
 
     /* Conditional branch instruction (jnz, etc). We append the instrumentation
        right after the branch (to instrument the not-taken path) and at the
@@ -384,6 +401,11 @@ static void add_instrumentation(void) {
 
       if (line[1] == 'j' && line[2] != 'm' && R(100) < inst_ratio) {
 
+
+#ifdef _2_GUIDED_NEIGHBOR
+        fputs(line, outf);
+#endif
+
         fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
                 R(MAP_SIZE));
 
@@ -391,9 +413,30 @@ static void add_instrumentation(void) {
 
       }
 
+#ifdef _2_GUIDED_NEIGHBOR
+      else if(!strncmp(line+1, "call", 4)){
+
+      	fputs(use_64bit ? bak_afl_prev_loc_64 : bak_afl_prev_loc_32, outf);
+        fputs(line, outf);
+        fputs(use_64bit ? restore_afl_prev_loc_64 : restore_afl_prev_loc_32, outf);
+
+        ins_lines++;
+
+
+      } else {
+
+      	fputs(line, outf);
+
+      }
+#endif
+
       continue;
 
     }
+
+#ifdef _2_GUIDED_NEIGHBOR
+    fputs(line, outf);
+#endif
 
     /* Label of some sort. This may be a branch destination, but we need to
        tread carefully and account for several different formatting
@@ -455,7 +498,7 @@ static void add_instrumentation(void) {
         /* Function label (always instrumented, deferred mode). */
 
         instrument_next = 1;
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
         fun_head = 1;
 #endif
 
@@ -465,7 +508,7 @@ static void add_instrumentation(void) {
 
   }
 
-#ifdef PATH_HASH
+#ifdef _1_PATH_HASH
   if (ins_lines){
     fputs(use_64bit ? main_payload_64 : main_payload_32, outf);
     fputs(use_64bit ? main_payload_64_fun : main_payload_32_fun, outf);

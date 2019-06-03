@@ -19,14 +19,11 @@
 
 #include "types.h"
 
-#define PATH_HASH
+#define _1_PATH_HASH
+#define _2_GUIDED_NEIGHBOR
 
 /* Version string: */
-#ifdef PATH_HASH
 #define VERSION             "2.52b-Path"
-#else
-#define VERSION             "2.52b"
-#endif
 
 /******************************************************
  *                                                    *
