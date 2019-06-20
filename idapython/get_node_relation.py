@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import ptvsd
+#import ptvsd
 
 try:
     # Enable the debugger. Raises exception if called more than once.
@@ -17,27 +17,10 @@ import time
 import datetime
 import ctypes
 
-IDA_ENABLED = False
-try:
-    import idc
-    import idaapi
-    import idautils
-    from idaapi import PluginForm, plugin_t
-    IDA_ENABLED = True
-except ImportError as e:
-    class PluginForm:
-        def __init__(self):
-            pass
-    class plugin_t:
-        def __init__(self):
-            pass
-    class idaapi:
-        PLUGIN_UNL=None
-        PLUGIN_OK=None
-        def __init__(self):
-            pass
-    print(e.message)
-    IDA_ENABLED = False
+import idc
+import idaapi
+import idautils
+from idaapi import PluginForm, plugin_t
 
 
 g_time_start = time.time()
@@ -86,33 +69,32 @@ def Find__afl_maybe_log(start, end):
             print(hex(addr), idc.GetDisasm(addr))
             break
     return
+       
 
-
-def get_fun_bbls(self, function_ea):
+def GetFunBbls(function_ea):
     """
     Get bbls of function.
     @function_ea - function address
-    @return - bbs of function
+    @return - bbls of function
     """
     f_start = function_ea
     f_end = idc.FindFuncEnd(function_ea)
 
     boundaries = set((f_start,))
-    fun_metrics = dict()
     
     for head in idautils.Heads(f_start, f_end):
         # If the element is an instruction
-        if head == ida_idaapi.BADADDR:
+        if head == idaapi.BADADDR:
             raise Exception("Invalid head for parsing")
-        if isCode(idc.GetFlags(head)):
+        if idc.isCode(idc.GetFlags(head)):
 
             # Get the references made from the current instruction
             # and keep only the ones local to the function.
             refs = idautils.CodeRefsFrom(head, 0)
             refs_filtered = set()
             for ref in refs:
-                if ref == ida_idaapi.BADADDR:
-                    print "Invalid reference for head", head
+                if ref == idaapi.BADADDR:
+                    print("Invalid reference for head", head)
                     raise Exception("Invalid reference for head")
 
                 if ref >= f_start and ref < f_end:
@@ -126,12 +108,12 @@ def get_fun_bbls(self, function_ea):
                 # if the condition is not met, so we save that
                 # reference as well.
                 next_head = idc.NextHead(head, f_end)
-                if next_head == ida_idaapi.BADADDR:
-                    print "Invalid next head after ", head
+                if next_head == idaapi.BADADDR:
+                    print("Invalid next head after ", head)
                     raise Exception("Invalid next head")
-                if isFlow(idc.GetFlags(next_head)):
+                if idc.isFlow(idc.GetFlags(next_head)):
                     refs.add(next_head)
-
+                
                 # Update the boundaries found so far.
                 boundaries.update(refs)
 
@@ -151,7 +133,8 @@ def get_fun_bbls(self, function_ea):
                 bbls.append(bbl)
                 bbl = []
             bbl.append(head)
-        elif self.GetInstructionType(head) == self.BRANCH_INSTRUCTION:
+        #elif self.GetInstructionType(head) == self.BRANCH_INSTRUCTION:
+        elif idc.GetMnem(head).startswith('j'):
             if len(bbl) > 0 and bbl[0] == head + idc.ItemSize(head):
                 continue
             bbl.append(head + idc.ItemSize(head))
@@ -161,16 +144,11 @@ def get_fun_bbls(self, function_ea):
         else:
             pass
     # add last basic block
-    if len(bbl) and bbl[0] != chunk[1]:
-        bbl.append(chunk[1])
+    if len(bbl) and bbl[0] != f_end:
+        bbl.append(f_end)
         bbls.append(bbl)
+        
     return bbls
-
-    #i = 0
-    #for bbl in bbls:
-    #    print('%02d %x %x') % (i+1, bbl[0], bbl[1])
-    #    i += 1
-    #i = 1
 
 
 def CountEdgeInBranch(func, parent, cur, stack):
@@ -198,7 +176,7 @@ def CountEdgeInBranch(func, parent, cur, stack):
     stack.append(cur)
 
     ea = cur
-    while ea < end and BADADDR != ea: #idaapi.BADADDR
+    while ea < end and idaapi.BADADDR != ea: #idaapi.BADADDR
         #print(hex(ea), idc.GetDisasm(ea))
         flag = idc.GetFlags(ea)
         if idc.isData(flag):
@@ -247,12 +225,14 @@ def CountEdgeInBranch(func, parent, cur, stack):
 
 def FindChildNode(func, parent, cur, stack, num_call):
     '''
-    Find 1st layer child.
+    Find 1st layer child. 
+    Recusion when encounter jump instruction. Stop when found a child node.
     @func       function address
     @parent     parent node address
     @cur        the address to start the search. This vuale is typically the starting address of BBL.
     @stack      stack of search address, avoid recusion loops
     @num_call   indicates how many call is contained in one edge.
+    @write_head 
     '''
     global g_f
     global g_off_set_random
@@ -261,7 +241,8 @@ def FindChildNode(func, parent, cur, stack, num_call):
     global g_ins_2
     global g_off_random
 
-    num_mem = 0
+    num_call = 0 # don't count call in head bbl
+    num_mem = 0  # don't count call mem function in head bbl
     write_head = 0
 
     # current pos must in func
@@ -275,7 +256,7 @@ def FindChildNode(func, parent, cur, stack, num_call):
     stack.append(cur)
 
     ea = cur
-    while ea < end and BADADDR != ea: #idaapi.BADADDR
+    while ea < end and idaapi.BADADDR != ea: #idaapi.BADADDR
         #print(hex(ea), idc.GetDisasm(ea))
         flag = idc.GetFlags(ea)
         if idc.isData(flag):
@@ -292,7 +273,7 @@ def FindChildNode(func, parent, cur, stack, num_call):
             parent_id = idc.Dword(parent+g_off_random) #(int)(idc.GetOpnd(parent, 1).strip('h'), 16)
             child_id = idc.Dword(ea+g_off_set_random+g_off_random) #(int)(idc.GetOpnd(ea+0x13, 1).strip('h'), 16)
             #if len(g_dict_func_edge):
-            if 1 == write_head:
+            if 1 == write_head: # found a child node, stop
                 g_f.write(("%d %d\n") % ( num_call, num_mem ))
                 return
 
@@ -300,7 +281,7 @@ def FindChildNode(func, parent, cur, stack, num_call):
                 #g_f.write(("%x %x %x %x %d %d %d\n") % ( parent, ea+0x13, parent_id, child_id, (parent_id >> 1) ^ child_id, num_call, num_mem ))
                 g_f.write(("%d %d %d %d %d ") % ( parent, ea+g_off_set_random, parent_id, child_id, (parent_id >> 1) ^ child_id))
                 write_head = 1
-            #return
+            #return # found a child node, stop
 
         mnem = idc.GetMnem(ea) #asm = idc.GetDisasm(ea)
         if 0 == len(mnem):
@@ -308,18 +289,16 @@ def FindChildNode(func, parent, cur, stack, num_call):
             continue
                 
         elif mnem[:3] == 'ret': #asm[:3] == 'ret':
-            if write_head:
+            if write_head: # found a child node, stop
                 g_f.write(("%d %d\n") % ( num_call, num_mem ))
             return
 
         # jmp jz jnz ja ......
-        elif 'j' == mnem[0]: # and 'm' != idc.GetDisasm(ea)[1]:
+        elif 'j' == mnem[0]: # and 'm' != mnem[1]:   jmp dst addr has been instumented.
             
-            if write_head:
+            if write_head: # found a child node, stop
                 g_f.write(("%d %d\n") % ( num_call, num_mem ))
-                return
-
-            num_call = 0 #
+                return 
 
             for xref in idautils.XrefsFrom(ea): # idautils.ida_xref.XREF_ALL)
                 if xref.type == 18 or xref.type == 19: # 18 :'Code_Far_Jump', 19 : 'Code_Near_Jump',   please see XrefTypeName                    
@@ -356,10 +335,137 @@ def FindChildNode(func, parent, cur, stack, num_call):
             ea += idc.ItemSize(ea)
             #ea += idc.DecodeInstruction(ea)
             #ea = idc.NextNotTail(ea)
+    
+    if write_head: # found a child node, stop
+        g_f.write(("%d %d\n") % ( num_call, num_mem ))
+
+    return
+
+
+def FindChildNode2(func, bbl_heads, parent, cur, stack, num_call, write_head):
+    '''
+    Handle function which was instrumented by ratio.
+    Find 1st layer instrumented child.
+    Recusion when encounter jump instruction. Stop when found a child node.
+    @func       function address
+    @bbl_heads  all bbl heads of function.
+    @parent     parent node address
+    @cur        the address to start the search. This vuale is typically the starting address of BBL.
+    @stack      stack of search address, avoid recusion loops
+    @num_call   indicates how many call is contained in one edge.
+    @write_head list
+    '''
+    global g_f
+    global g_off_set_random
+    global g_size_ins_block
+    global g_ins_1
+    global g_ins_2
+    global g_off_random
+
+    # num_call = 0 # don't count call in parent bbl
+    num_mem = 0  # don't count call mem function in parent bbl
+
+    # current pos must in func
+    end = idc.GetFunctionAttr(func, idc.FUNCATTR_END)
+    if cur < func:
+        return
+
+    # avoid recusion loops
+    if cur in stack:
+        return
+    stack.append(cur)
+
+    ea = cur
+    while ea < end and idaapi.BADADDR != ea: #idaapi.BADADDR
+        #print(hex(ea), idc.GetDisasm(ea))
+        flag = idc.GetFlags(ea)
+        if idc.isData(flag):
+            ea += idc.ItemSize(ea)
+            continue
+
+        if not idc.isCode(flag):
+            ea += 1
+            continue
+
+        # code
+        # found a child node, stop
+        if ea < end - g_size_ins_block and g_ins_1 == idc.Qword(ea) and g_ins_2 == idc.Qword(ea+8):
+            parent_id = idc.Dword(parent+g_off_random) #(int)(idc.GetOpnd(parent, 1).strip('h'), 16)
+            child_id = idc.Dword(ea+g_off_set_random+g_off_random) #(int)(idc.GetOpnd(ea+0x13, 1).strip('h'), 16)
+            #if len(g_dict_func_edge):
+            if 1 == write_head[0]: # found a child node, stop
+                g_f.write(("%d %d\n") % ( num_call, num_mem ))
+                write_head[0] = 0
+                return
+
+            if parent != ea+g_off_set_random:
+                #g_f.write(("%x %x %x %x %d %d %d\n") % ( parent, ea+0x13, parent_id, child_id, (parent_id >> 1) ^ child_id, num_call, num_mem ))
+                g_f.write(("%d %d %d %d %d ") % ( parent, ea+g_off_set_random, parent_id, child_id, (parent_id >> 1) ^ child_id))
+                write_head[0] = 1
+            #return
+
+        if ea in bbl_heads:
+            pass
+
+        mnem = idc.GetMnem(ea) #asm = idc.GetDisasm(ea)
+        if 0 == len(mnem):
+            ea += 1
+            continue
+                
+        elif mnem[:3] == 'ret': #asm[:3] == 'ret':
+            if write_head[0]: # found a child node, stop
+                g_f.write(("%d %d\n") % ( num_call, num_mem ))
+                write_head[0] = 0
+            return
+
+        # jmp jz jnz ja ......
+        elif 'j' == mnem[0]: # and 'm' != mnem[1]:   jmp dst addr has been instumented.
+            
+            if write_head: # found a child node, stop
+                g_f.write(("%d %d\n") % ( num_call, num_mem ))
+                write_head[0] = 0
+                return
+
+            for xref in idautils.XrefsFrom(ea): # idautils.ida_xref.XREF_ALL)
+                if xref.type == 18 or xref.type == 19: # 18 :'Code_Far_Jump', 19 : 'Code_Near_Jump',   please see XrefTypeName                    
+                    FindChildNode2(func, bbl_heads, parent, xref.to, stack, num_call, write_head)
+
+                elif xref.type == 20: # 20 : 'Code_User'
+                    print('******************************************')
+                    print('Code_User', hex(parent), hex(ea), idc.GetDisasm(ea))
+
+                elif xref.type == 21: # 21 : 'Ordinary_Flow'
+                    FindChildNode2(func, bbl_heads, parent, xref.to, stack, num_call, write_head)
+            
+            return
+
+        # call.  count call ins.
+        elif mnem == 'call': #asm.startswith('call'):
+            to = 0
+            for to in idautils.CodeRefsFrom(ea, False):                
+                fun_name = idc.GetFunctionName(to)
+                if fun_name.find('alloc') >= 0 or fun_name.find('free') >= 0 or fun_name.find('create') >= 0 or fun_name.find('delete') >= 0:
+                    num_mem += 1
+                break
+             # only count instrumented function
+            if idc.SegName(ea) == idc.SegName(to):
+                if g_ins_1 == idc.Qword(to) and g_ins_2 == idc.Qword(to+8):
+                    #if len(g_dict_func_edge):
+                    #    num_call += g_dict_func_edge[to]
+                    #else:
+                    num_call += 1
+            ea += idc.ItemSize(ea)
+            continue
+
+        else:
+            ea += idc.ItemSize(ea)
+            #ea += idc.DecodeInstruction(ea)
+            #ea = idc.NextNotTail(ea)
 
     
     if write_head:
         g_f.write(("%d %d\n") % ( num_call, num_mem ))
+        write_head[0] = 0
 
     return
 
@@ -372,8 +478,7 @@ def HandleFunc(func):
     global g_ins_2
 
     #for ins in idautils.FuncItems(start):
-    #    print(idc.GetDisasm(ins))    
-
+    #    print(idc.GetDisasm(ins))   
     ea = func
     end = idc.GetFunctionAttr(func, idc.FUNCATTR_END)
     while ea <= end-g_size_ins_block:
@@ -381,9 +486,18 @@ def HandleFunc(func):
             #print(idc.GetFunctionName(start))
             #print(hex(ea), idc.GetDisasm(addr))
             #idc.SetColor(ea+0x13, CIC_ITEM, 0x0000FF)
+
+            bbls = GetFunBbls(func)
+            bbl_heads = ()
+            #for bbl in bbls:
+                #bbl_heads.append(bbl[0])
+             
+            write_head = [0]
             call_stack = []
             FindChildNode(func, ea+g_off_set_random, ea+g_size_ins_block, call_stack, 0)
+            FindChildNode2(func, bbl_heads, ea+g_off_set_random, ea+g_size_ins_block, call_stack, 0, write_head)
             ea += g_size_ins_block
+
         else:
             ea += 1
     pass
@@ -394,7 +508,7 @@ def HandleFunc_GetInOut(func):
     count = 0
     ea = func
     end = idc.GetFunctionAttr(func, idc.FUNCATTR_END)
-    while ea < end and BADADDR != ea:
+    while ea < end and idaapi.BADADDR != ea:
         mnem = idc.GetMnem(ea)
         if 0 == len(mnem):
             ea += 1
@@ -406,11 +520,12 @@ def HandleFunc_GetInOut(func):
                 print(hex(func))
                 return
 
-        ea += idc.ItemSize(ea)
+        ea += idc.ItemSize(ea)        
 
                
 
 def main():
+
     idaapi.msg("Loading AFL_Node_Extract\n")
     
     global g_num_edge
@@ -423,7 +538,7 @@ def main():
 
     dict_func_edge = {}
 
-    if __EA64__: # 64bit
+    if idc.__EA64__: # 64bit
         g_off_set_random = 0x16
         g_size_ins_block = 0x38
         g_ins_1 = 0xFFFFFF6824A48D48
@@ -461,19 +576,12 @@ def main():
     except Exception:
         pass
 
-
-
-def main_standalone():
-	print("main_standalone")
-
-if __name__ == "__main__":
-    print(IDA_ENABLED)
-    if IDA_ENABLED:
-        main()
-    else:
-        main_standalone()
-
     g_f.write('analyse time: ' + str(time.time() - g_time_start) + 's\n')
     g_f.close()
     print('analyse time: ' + str(time.time() - g_time_start) + 's\n')
+
+
+if __name__ == "__main__":    
+    main()
+
 
