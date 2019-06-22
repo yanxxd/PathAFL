@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import ptvsd
+#import ptvsd
 
 try:
     # Enable the debugger. Raises exception if called more than once.
@@ -82,10 +82,10 @@ def main():
                 continue            
            
             # call    __afl_maybe_log
-            if __EA64__: # 64bit
+            if idc.__EA64__: # 64bit
                 addr_call = func + 0x1D
             else: # 32bit                
-                addr_call = func + 0x15
+                addr_call = func + 0x08
  
             mnem = idc.GetMnem(addr_call)
             if mnem != 'call':
