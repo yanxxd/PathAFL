@@ -51,6 +51,10 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
+# vscode
+.idea/
+.vscode/
+
 # eclipse
 .project
 .cproject
