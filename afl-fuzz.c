@@ -4347,7 +4347,7 @@ static void show_stats(void) {
 
   }
 #ifdef _1_PATH_HASH
-  SAYF(bV bSTOP "        run time : " cRST "%-30s " bSTG bV bSTOP
+  SAYF(bV bSTOP "        run time : " cRST "%-31s" bSTG bV bSTOP
        "  cycles done : %s%-5s      " bSTG bV "\n",
        DTD(cur_ms, start_time), tmp, DI(queue_cycle - 1));
 #else
@@ -4412,14 +4412,17 @@ static void show_stats(void) {
   SAYF(bV bSTOP "  last uniq hang : " cRST "%-30s " bSTG bV bSTOP
        "   uniq hangs : " cRST "%-6s     " bSTG bV "\n",
        DTD(cur_ms, last_hang_time), tmp);
+
+  SAYF(bVR bH bSTOP cCYA " cycle progress " bSTG bH20 bHB bH bSTOP cCYA
+       " map coverage " bSTG bH2 bH20 bH2 bH bVL "\n");
 #else
   SAYF(bV bSTOP "  last uniq hang : " cRST "%-34s " bSTG bV bSTOP
        "   uniq hangs : " cRST "%-6s " bSTG bV "\n",
        DTD(cur_ms, last_hang_time), tmp);
-#endif
 
   SAYF(bVR bH bSTOP cCYA " cycle progress " bSTG bH20 bHB bH bSTOP cCYA
        " map coverage " bSTG bH bHT bH20 bH2 bH bVL "\n");
+#endif
 
   /* This gets funny because we want to print several variable-length variables
      together, but then cram them into a fixed-width field - so we need to

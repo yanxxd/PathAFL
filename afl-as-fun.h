@@ -431,7 +431,7 @@ static const u8* main_payload_64_fun =
   "\n"
 #ifdef _1_PATH_HASH
   //"  /* rorq $8, %rdi\n */"
-  "  xorl %ecx, 65536(%rdx)\n"
+  "  xorq %rcx, 65536(%rdx)\n"
 	//"  incl 65540(%rdx)\n"
 #endif
 #ifndef COVERAGE_ONLY

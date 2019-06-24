@@ -41,6 +41,7 @@
 *.su
 *.idb
 *.pdb
+*.i64
 
 # Kernel Module Compile Results
 *.mod*
@@ -54,6 +55,7 @@ dkms.conf
 # vscode
 .idea/
 .vscode/
+.settings/
 
 # eclipse
 .project
@@ -67,3 +69,14 @@ afl-clang
 afl-clang++
 afl-g++
 afl-gcc
+as
+test-instr
+afl-tmin
+afl-showmap
+afl-gotcpu
+
+# bark file
+*.bak
+
+# tmp file
+.test-instr0
