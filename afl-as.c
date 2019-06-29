@@ -239,6 +239,7 @@ static void add_instrumentation(void) {
 
 #ifdef _1_PATH_HASH
   u8 fun_head = 0;
+  u32 ins_funcs = 0;
 #endif
 
   if (input_file) {
@@ -271,6 +272,8 @@ static void add_instrumentation(void) {
 				//if (R(100) < 10)
 					fprintf(outf, use_64bit ? trampoline_fmt_64_fun : trampoline_fmt_32_fun,
 							R(MAP_SIZE));
+					ins_funcs++;
+
 //				else
 //					fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
 //					              R(MAP_SIZE));
@@ -508,14 +511,13 @@ static void add_instrumentation(void) {
 
   }
 
-#ifdef _1_PATH_HASH
-  if (ins_lines){
-    fputs(use_64bit ? main_payload_64 : main_payload_32, outf);
-    fputs(use_64bit ? main_payload_64_fun : main_payload_32_fun, outf);
-  }
-#else
   if (ins_lines)
     fputs(use_64bit ? main_payload_64 : main_payload_32, outf);
+
+#ifdef _1_PATH_HASH
+  if (ins_funcs){
+    fputs(use_64bit ? main_payload_64_fun : main_payload_32_fun, outf);
+  }
 #endif
 
   if (input_file) fclose(inf);
