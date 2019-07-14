@@ -60,6 +60,7 @@ dkms.conf
 # eclipse
 .project
 .cproject
+.pydevproject
 
 # bin
 afl-analyze

@@ -432,7 +432,7 @@ static u64 calc_neighbor(struct queue_entry *q) {
 				break;
 
 			//num += g_edge_info[j].num_edge + 1;
-			num += 1 + (g_edge_info[j].num_call >> 1) + (g_edge_info[j].num_mem >> 4);
+			num += 1 + (g_edge_info[j].num_call << 1) + (g_edge_info[j].num_mem << 4);//;
 		}
 	}
 
@@ -1459,7 +1459,7 @@ static void cull_queue(void) {
 
 #if (defined _2_GUIDED_NEIGHBOR)
 
-	if (queue_cur) {
+	if (queue_cur && g_edge_info_num) {
 
 		for (; q != queue_cur; q = q->next) {
 
