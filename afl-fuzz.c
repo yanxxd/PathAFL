@@ -291,6 +291,7 @@ static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
 static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 
 #ifdef _1_PATH_HASH
+static u32 g_new_paths_ratio = 50;			// percentage of new paths, default 50%
 static u32 g_new_paths;
 static struct queue_entry* g_path_hash[MAP_SIZE] = {0};
 #endif
@@ -380,6 +381,7 @@ struct edge_neighbor {
 struct edge_neighbor *g_edge_info = NULL;
 unsigned int g_edge_info_num = 0;
 unsigned short g_edge_info_index[MAP_SIZE];
+unsigned int g_guide_type = 1;		//neighbor guided type. 0:none 1:call 2:call_mem. default 1
 
 static int load_edge_neighbor_file(char *fn) {
 
@@ -432,7 +434,13 @@ static u64 calc_neighbor(struct queue_entry *q) {
 				break;
 
 			//num += g_edge_info[j].num_edge + 1;
-			num += 1 + (g_edge_info[j].num_call << 1) + (g_edge_info[j].num_mem << 4);//;
+			if (0 == g_guide_type){
+				num += 1;
+			} else if (1 == g_guide_type) {
+				num += 1 + (g_edge_info[j].num_call << 1);
+			} else if (2 == g_guide_type) {
+				num += 1 + (g_edge_info[j].num_call << 1) + (g_edge_info[j].num_mem << 4);
+			}
 		}
 	}
 
@@ -1461,7 +1469,15 @@ static void cull_queue(void) {
 
 	if (queue_cur && g_edge_info_num) {
 
-		for (; q != queue_cur; q = q->next) {
+#ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
+		// a seed is selected before next_id or queue_cur. note: queue_cur maybe greater than next_id--------
+		static u32 next_cycle = 1;
+		static u32 next_id = 500;
+
+		for (; q && (q->id < next_id || q->id < queue_cur->id); q = q->next) {
+#else
+	  for (; q != queue_cur; q = q->next) {
+#endif
 
 			if (!q->favored)
 				continue;
@@ -1484,49 +1500,68 @@ static void cull_queue(void) {
 		static u64 time_additional = 0;
 		u64 time_start = get_cur_time();
 
-		for (q = queue_cur; q; q = q->next) {
+#ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
+		if ( queue_cycle > next_cycle || queue_cur->id >= next_id ) {
 
-			q->neighbor_score = (calc_neighbor(q) << 16) + q->id;
-			sum += q->neighbor_score;
+			if (queue_cycle > next_cycle) {
+				++next_cycle;
+			}
 
-			if (q->neighbor_score > max)
-				max = q->neighbor_score;
+			next_id = queue_cur->id + 500 + R(500);
 
-			++count;
-		}
-
-		if (count) {
-			average = sum / count;
-			average += (max - average) / 5;
-
-			AFL_LOG("cur=%d count=%d average=%x ", queue_cur->id, count, average);
-			count = 0;
-//			for (q = queue_cur; q && q->id < next_id; q = q->next) {
+			for (q = queue_cur; q && q->id < next_id; q = q->next) {
+#else
 			for (q = queue_cur; q; q = q->next) {
+#endif
 
-				if (q->neighbor_score <= average) {
-					q->favored = 0;
-					continue;
-				}
+				q->neighbor_score = (calc_neighbor(q) << 16) + q->id;
+				sum += q->neighbor_score;
 
-				u32 j = MAP_SIZE >> 3;
-				while (j--)
-					if (q->trace_mini[j])
-						temp_v[j] &= ~q->trace_mini[j];
+				if (q->neighbor_score > max)
+					max = q->neighbor_score;
 
-				q->favored = 1;
-				queued_favored++;
-
-				if (!q->was_fuzzed)
-					++pending_favored;
-
-				//AFL_LOG("%06d-%x ", q->id, q->neighbor_score);
 				++count;
 			}
 
-			time_additional += get_cur_time() - time_start;
-			AFL_LOG("favored=%d time_additional=%llus\n", count, time_additional/1000);
-		}
+			if (count) {
+				average = sum / count;
+				average += (max - average) / 5;
+
+				AFL_LOG("cur=%d count=%d average=%x ", queue_cur->id, count, average);
+				count = 0;
+#ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
+				for (q = queue_cur; q && q->id < next_id; q = q->next) {
+#else
+				for (q = queue_cur; q; q = q->next) {
+#endif
+
+					if (q->neighbor_score <= average) {
+						q->favored = 0;
+						continue;
+					}
+
+					u32 j = MAP_SIZE >> 3;
+					while (j--)
+						if (q->trace_mini[j])
+							temp_v[j] &= ~q->trace_mini[j];
+
+					q->favored = 1;
+					queued_favored++;
+
+					if (!q->was_fuzzed)
+						++pending_favored;
+
+					//AFL_LOG("%06d-%x ", q->id, q->neighbor_score);
+					++count;
+				}
+
+				time_additional += get_cur_time() - time_start;
+				AFL_LOG("favored=%d time_additional=%llus\n", count, time_additional/1000);
+			}
+
+#ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
+		} // end of if ( queue_cycle > next_cycle || queue_cur->id >= next_id ) {
+#endif
 
 	} //end of if (queue_cur)
 #endif //end of (defined _2_GUIDED_NEIGHBOR)
@@ -1563,6 +1598,39 @@ static void cull_queue(void) {
     mark_as_redundant(q, !q->favored);
     q = q->next;
   }
+
+#ifdef AFL_PLUS_1_FIX_MISS_EDGE_BUG
+  u8 bug = 1;
+  for (i = 0; i < MAP_SIZE; ++i) {
+
+		if (!top_rated[i] || !(temp_v[i >> 3] & (1 << (i & 7))))
+			continue;
+
+		bug = 1;
+		q = queue_cur;
+		while (q) {
+			if (!q->favored && q->trace_mini && (q->trace_mini[i >> 3] & (1 << (i & 7)))) {
+
+				u32 j = MAP_SIZE >> 3;
+				while (j--)
+					temp_v[j] &= ~q->trace_mini[j];
+
+				q->favored = 1;
+				queued_favored++;
+				if (!q->was_fuzzed)
+					pending_favored++;
+				bug = 0;
+				break;
+			}
+			q = q->next;
+		} // end of while (q)
+
+		if(bug)
+			AFL_LOG("!!!bug!!! edge %d isn't coverage! %s queue_cur=%d\n", i, out_dir, queue_cur->id)
+		else
+			AFL_LOG("!!!fixed!!! edge %d is fixed! %s queue_cur=%d\n", i, out_dir, queue_cur->id)
+	} // end of for (i = 0; i < MAP_SIZE; ++i)
+#endif
 
 }
 
@@ -3383,7 +3451,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
 #ifdef _1_PATH_HASH
-      if ( g_new_paths > (queued_paths >> 2)  || R(100) < 67 )
+      if ( g_new_paths >= queued_paths * g_new_paths_ratio / (100+g_new_paths_ratio)
+      		|| R(100) < 67 )
       	return 0;
 
       // check hash when time interval > 3s and don't find new paths
@@ -7415,6 +7484,16 @@ static void usage(u8* argv0) {
        "  -M / -S id    - distributed mode (see parallel_fuzzing.txt)\n"
        "  -C            - crash exploration mode (the peruvian rabbit thing)\n\n"
 
+#ifdef _1_PATH_HASH
+  		 "  -r ratio      - percentage of new paths, default 50%% \n"
+ 		   "  -v            - verbose mode \n"
+#endif
+
+#ifdef _2_GUIDED_NEIGHBOR
+  		 "  -h name       - neighbor info file \n"
+  		 "  -g type       - neighbor guided type. 0:none 1:call 2:call_mem. default 1 \n\n"
+#endif
+
        "For additional tips, please consult %s/README.\n\n",
 
        argv0, EXEC_TIMEOUT, MEM_LIMIT, doc_path);
@@ -8074,8 +8153,8 @@ int main(int argc, char** argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-#ifdef _2_GUIDED_NEIGHBOR
-  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qvh:")) > 0)
+#if (defined _2_GUIDED_NEIGHBOR) || (defined _1_PATH_HASH)
+  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qvh:r:g:")) > 0)
 #else
   while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Q")) > 0)
 #endif
@@ -8250,11 +8329,21 @@ int main(int argc, char** argv) {
       	verbose_mode = 1;
       	break;
 
+#ifdef _1_PATH_HASH
+      case 'r':
+      	g_new_paths_ratio = atoi(optarg);
+      	break;
+#endif
+
 #ifdef _2_GUIDED_NEIGHBOR
 
       case 'h':
         if (fn_neighbor) FATAL("Multiple -x options not supported");
         fn_neighbor = optarg;
+      	break;
+
+      case 'g':
+        g_guide_type = atoi(optarg);
       	break;
 #endif
 
