@@ -381,7 +381,7 @@ struct edge_neighbor {
 struct edge_neighbor *g_edge_info = NULL;
 unsigned int g_edge_info_num = 0;
 unsigned short g_edge_info_index[MAP_SIZE];
-unsigned int g_guide_type = 1;		//neighbor guided type. 0:none 1:call 2:call_mem. default 1
+unsigned int g_guide_type = 1;		//neighbor guided type. 0:only count child  1:+call  2:+call+mem. default 1
 
 static int load_edge_neighbor_file(char *fn) {
 
@@ -7491,7 +7491,7 @@ static void usage(u8* argv0) {
 
 #ifdef _2_GUIDED_NEIGHBOR
   		 "  -h name       - neighbor info file \n"
-  		 "  -g type       - neighbor guided type. 0:none 1:call 2:call_mem. default 1 \n\n"
+  		 "  -g type       - neighbor guided type. 0:only count child  1:+call  2:+call+mem. default 1 \n\n"
 #endif
 
        "For additional tips, please consult %s/README.\n\n",
