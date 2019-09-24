@@ -291,7 +291,7 @@ static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
 static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 
 #ifdef _1_PATH_HASH
-static u32 g_new_paths_ratio = 50;			// percentage of new paths, default 50%
+static u32 g_new_paths_ratio = 0;			// percentage of new paths, default 0%
 static u32 g_new_paths;
 static struct queue_entry* g_path_hash[MAP_SIZE] = {0};
 #endif
@@ -439,7 +439,7 @@ static u64 calc_neighbor(struct queue_entry *q) {
 			} else if (1 == g_guide_type) {
 				num += 1 + (g_edge_info[j].num_call << 1);
 			} else if (2 == g_guide_type) {
-				num += 1 + (g_edge_info[j].num_call << 1) + (g_edge_info[j].num_mem << 4);
+				num += 1 + (g_edge_info[j].num_call << 1) + (g_edge_info[j].num_mem << 2);
 			}
 		}
 	}
@@ -1079,7 +1079,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
 
 
 #ifdef _1_PATH_HASH
-static inline u8 has_new_path(u32 cksum) {
+static inline u8 has_new_path(/*u32 cksum*/) {
 
 	u16 path_hash = *(u16*)(trace_bits + MAP_SIZE);
 
@@ -1469,27 +1469,24 @@ static void cull_queue(void) {
 
 	if (queue_cur && g_edge_info_num) {
 
-#ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
 		// a seed is selected before next_id or queue_cur. note: queue_cur maybe greater than next_id--------
-		static u32 next_cycle = 1;
-		static u32 next_id = 500;
+		//static u32 next_cycle = 1;
+		//static u32 next_id = 500;
 
-		for (; q && (q->id < next_id || q->id < queue_cur->id); q = q->next) {
-#else
-	  for (; q != queue_cur; q = q->next) {
-#endif
-
-			if (!q->favored)
-				continue;
-			// set temp_v to zero for all the edges that the q covers
-			u32 j = MAP_SIZE >> 3;
-			while (j--)
-				if (q->trace_mini[j])
-					temp_v[j] &= ~q->trace_mini[j];
-
-			++queued_favored;
-			if (!q->was_fuzzed)		++pending_favored;
-		}
+		//for (; q && (q->id < next_id || q->id < queue_cur->id); q = q->next) {
+//		for (; q != queue_cur; q = q->next) {
+//
+//			if (!q->favored)
+//				continue;
+//			// set temp_v to zero for all the edges that the q covers
+//			u32 j = MAP_SIZE >> 3;
+//			while (j--)
+//				if (q->trace_mini[j])
+//					temp_v[j] &= ~q->trace_mini[j];
+//
+//			++queued_favored;
+//			if (!q->was_fuzzed)		++pending_favored;
+//		}
 
 		// calclate neighbor scores of 50~99 seeds from the current position,
 		// and about top 40% seeds were added into the queue.
@@ -1501,13 +1498,13 @@ static void cull_queue(void) {
 		u64 time_start = get_cur_time();
 
 #ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
-		if ( queue_cycle > next_cycle || queue_cur->id >= next_id ) {
+//		if ( queue_cycle > next_cycle || queue_cur->id >= next_id ) {
+//
+//			if (queue_cycle > next_cycle) {
+//				++next_cycle;
+//			}
 
-			if (queue_cycle > next_cycle) {
-				++next_cycle;
-			}
-
-			next_id = queue_cur->id + 500 + R(500);
+		  u32 next_id = queue_cur->id + 500 + R(500);
 
 			for (q = queue_cur; q && q->id < next_id; q = q->next) {
 #else
@@ -1560,7 +1557,7 @@ static void cull_queue(void) {
 			}
 
 #ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
-		} // end of if ( queue_cycle > next_cycle || queue_cur->id >= next_id ) {
+		//} // end of if ( queue_cycle > next_cycle || queue_cur->id >= next_id ) {
 #endif
 
 	} //end of if (queue_cur)
@@ -3373,6 +3370,9 @@ static u8* describe_op(u8 hnb) {
   }
 
   if (hnb == 2) strcat(ret, ",+cov");
+#ifdef _1_PATH_HASH
+  if (hnb == 3) strcat(ret, ",+pat");
+#endif
 
   return ret;
 
@@ -3438,10 +3438,6 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
   u8  hnb;
   s32 fd;
   u8  keeping = 0, res;
-#ifdef _1_PATH_HASH
-  u8	bcksum = 0;
-  u32 cksum;
-#endif
 
   if (fault == crash_mode) {
 
@@ -3450,8 +3446,11 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
+
 #ifdef _1_PATH_HASH
-      if ( g_new_paths >= queued_paths * g_new_paths_ratio / (100+g_new_paths_ratio)
+      // Don't have new bit. Judging whether there is a new path ?
+      if ( FAULT_TMOUT == fault // path_hash is inaccurate when timeout.
+      		|| g_new_paths >= queued_paths * g_new_paths_ratio / (100+g_new_paths_ratio)
       		|| R(100) < 67 )
       	return 0;
 
@@ -3467,15 +3466,14 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 //      if (get_cur_time() - last_path_time < 3000)
 //      	return 0;
 
-      cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-      if (!has_new_path(cksum)) return 0;
+      if ( !has_new_path() ) return 0;
 
       if ( count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries)
       	return 0;
 
-      bcksum = 1;
       ++g_new_paths;
       //++last_paths_num;
+      hnb = 3;
 #else
 			return 0;
 #endif
@@ -3501,13 +3499,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #ifdef _1_PATH_HASH
     queue_top->path_hash = *(u16*)(trace_bits + MAP_SIZE);
-    if (bcksum)
-    	queue_top->exec_cksum = cksum;
-    else
-      queue_top->exec_cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-#else
-      queue_top->exec_cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 #endif
+    queue_top->exec_cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
     /* Try to calibrate inline; this also calls update_bitmap_score() when
        successful. */
