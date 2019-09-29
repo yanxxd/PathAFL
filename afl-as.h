@@ -211,6 +211,25 @@ static const u8* trampoline_fmt_32 =
 	"\n";
 #endif //_1_PATH_HASH
 
+#ifdef _3_COLLAFL
+static const u8* trampoline_fmt_64 =
+
+  "\n"
+  "/* --- AFL TRAMPOLINE (64-BIT) --- */\n"
+  "\n"
+	"pushq %%rbx\n"
+	"pushq %%rcx\n"
+	"pushq $0x%08x\n"								// z
+	"movq  $0, %%rcx\n"							// x
+	"movq  $0x%08x, %%rbx\n"
+  "call __afl_maybe_log\n"
+	"popq %%rcx\n"
+  "popq %%rcx\n"
+	"popq %%rbx\n"
+  "\n"
+  "/* --- END --- */\n"
+  "\n";
+#else
 static const u8* trampoline_fmt_64 =
 
   "\n"
@@ -231,6 +250,7 @@ static const u8* trampoline_fmt_64 =
   "\n"
   "/* --- END --- */\n"
   "\n";
+#endif
 
 static const u8* main_payload_32 =
 
@@ -487,6 +507,11 @@ static const u8* main_payload_64 =
   "\n"
   "__afl_maybe_log:\n"
   "\n"
+#ifdef _3_COLLAFL
+	"  pushq %rax\n"
+	"  pushq %rdx\n"
+	"  pushq %rdi\n"
+#endif
 #if defined(__OpenBSD__)  || (defined(__FreeBSD__) && (__FreeBSD__ < 9))
   "  .byte 0x9f /* lahf */\n"
 #else
@@ -504,6 +529,30 @@ static const u8* main_payload_64 =
   "\n"
   "  /* Calculate and store hit for the code location specified in rcx. */\n"
   "\n"
+
+#ifdef _3_COLLAFL
+  "  cmpq  $0xFF, %rcx\n"									// x = rcx
+	"  jne   __collafl_fmul\n"							// x != 0xFF		unlikely
+
+	// x == 0xFF
+//	"\n"
+//	"  __collafl_single_hash:\n"
+//	"\n"
+	"  movq  8(%rsp), %rdi\n"								// z -> rdi
+//	"  cmpq  $0x7FFFFFFF, %rdi\n"						//
+//	"  je   __collafl_fhash\n"	  					// z == $0x7FFFFFFF  unlikely
+
+	// x == 0xFF && z != 0x7FFFFFFF __collafl_single   z
+	"\n"
+  "  __collafl_single:\n"
+	"\n"
+	"  mov   $1,  %cl\n"											// y -> rcx
+	"  shrq  %cl, %rbx\n"										// cur >> y  -> rbx
+	"  movq  %rbx, __afl_prev_loc(%rip)\n"	// cur >> y  -> prev
+
+	"  __collafl_add_cov:\n"
+	"  incb (%rdx, %rdi, 1)\n"
+#else
 #ifndef COVERAGE_ONLY
   "  xorq __afl_prev_loc(%rip), %rcx\n"
   "  xorq %rcx, __afl_prev_loc(%rip)\n"
@@ -515,6 +564,7 @@ static const u8* main_payload_64 =
 #else
   "  incb (%rdx, %rcx, 1)\n"
 #endif /* ^SKIP_COUNTS */
+#endif // _3_COLLAFL
   "\n"
   "__afl_return:\n"
   "\n"
@@ -524,8 +574,34 @@ static const u8* main_payload_64 =
 #else
   "  sahf\n"
 #endif /* ^__OpenBSD__, etc */
+#ifdef _3_COLLAFL
+	"  popq  %rdi\n"
+	"  popq  %rdx\n"
+	"  popq  %rax\n"
+#endif
   "  ret\n"
-  "\n"
+#ifdef _3_COLLAFL
+	// x != 0xFF  __collafl_fmul   (cur >> x) ^ (prev >> y) + z
+	"\n"
+	"  __collafl_fmul:\n"										// cur = rbx  x = rcx
+	"\n"
+	"  movq  %rbx, %rdi\n"									// cur -> rdi
+	"  shrq  %cl, %rdi\n"										// cur >> x -> rdi
+	"  xorq  __afl_prev_loc(%rip), %rdi\n" 	// (cur >> x) ^ (prev >> y) -> rdi
+	"  mov   $1, %cl\n"											// y -> rcx
+	"  shrq  %cl, %rbx\n"										// cur >> y  -> rbx
+	"  movq  %rbx, __afl_prev_loc(%rip)\n"	// cur >> y  -> prev
+	"  addq  8(%rsp), %rdi\n" 							// (cur >> x) ^ (prev >> y) + z  -> rbx
+	"  jmp   __collafl_add_cov\n"
+
+	// x == 0xFF && z == 0xFF  __collafl_fhash
+//	"\n"
+//	"  __collafl_fhash:\n"
+//	"\n"
+//	"  xorq  %rdi, %rdi\n"									// 0
+//	"  jmp   __collafl_single\n"
+#endif
+	  "\n"
   ".align 8\n"
   "\n"
   "__afl_setup:\n"

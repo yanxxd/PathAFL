@@ -270,8 +270,13 @@ static void add_instrumentation(void) {
 #ifdef _1_PATH_HASH
 			if (fun_head) {
 				//if (R(100) < 10)
+#ifdef _3_COLLAFL
+					fprintf(outf, use_64bit ? trampoline_fmt_64_fun : trampoline_fmt_32_fun,
+							256+R(MAP_SIZE-256), R(MAP_SIZE));
+#else
 					fprintf(outf, use_64bit ? trampoline_fmt_64_fun : trampoline_fmt_32_fun,
 							R(MAP_SIZE));
+#endif
 					ins_funcs++;
 
 //				else
@@ -281,8 +286,13 @@ static void add_instrumentation(void) {
 			} else
 #endif
 
+#ifdef _3_COLLAFL
       fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
-              R(MAP_SIZE));
+      		256+R(MAP_SIZE-256), R(MAP_SIZE));
+#else
+      fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
+      		R(MAP_SIZE));
+#endif
 
       instrument_next = 0;
       ins_lines++;
@@ -409,8 +419,13 @@ static void add_instrumentation(void) {
         fputs(line, outf);
 #endif
 
-        fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
-                R(MAP_SIZE));
+#ifdef _3_COLLAFL
+				fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
+						256+R(MAP_SIZE-256), R(MAP_SIZE));
+#else
+				fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
+						R(MAP_SIZE));
+#endif
 
         ins_lines++;
 

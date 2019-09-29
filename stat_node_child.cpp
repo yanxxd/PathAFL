@@ -120,7 +120,7 @@ int main(int argc, char **argv)
 	mmap_head_edge mmhe;
 
 	u32 num_ei = 0;
-	struct edge_info *ei = (struct edge_info*)malloc(statbuf.st_size / 32 * sizeof(struct edge_info));
+	struct edge_info *ei = (struct edge_info*)malloc(statbuf.st_size / 16 * sizeof(struct edge_info));
 
 	while(fgets(line, sizeof(line), f)){
 
@@ -132,7 +132,7 @@ int main(int argc, char **argv)
 
 		mmhe.insert(pair_head_edge(ei[num_ei].head_addr, ei[num_ei]));
 
-		if( ++num_ei > statbuf.st_size / 32)  PFATAL("alloc memory too small");
+		if( ++num_ei > statbuf.st_size / 16)  PFATAL("alloc memory too small");
 
 	}
 
@@ -160,6 +160,8 @@ int main(int argc, char **argv)
 			fwrite(&en, 1, sizeof(edge_neighbor), f);
 		}
 
+		if (ei[i].head_addr == ei[i].tail_addr)
+			continue;
     // find all value. method 2
 		auto p = mmhe.equal_range(ei[i].tail_addr);
 		for (it = p.first; it != p.second; ++it) {
@@ -175,7 +177,7 @@ int main(int argc, char **argv)
 	fclose(f);
 	free(ei);
 
-  fprintf(stdout, "\n%d\n", get_cur_time() - time_start);
+  fprintf(stdout, "\n%dms\n", get_cur_time() - time_start);
 
 	return 0;
 }

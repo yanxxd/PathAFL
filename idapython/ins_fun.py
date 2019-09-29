@@ -83,7 +83,7 @@ def main():
            
             # call    __afl_maybe_log
             if idc.__EA64__: # 64bit
-                addr_call = func + 0x1D
+                addr_call = func + 0x15
             else: # 32bit                
                 addr_call = func + 0x08
  
@@ -99,7 +99,9 @@ def main():
                 
         fun_info.sort(key=lambda x:x[1])
         num = len(fun_info)
+        print(num)
         for i in range(num-1, -1, -1):
+            print(hex(fun_info[i][0]))
             if fun_info[i][1] < 0x200 or i < num*90.0/100.0 and random.randint(0, 99) < 80: # remove fun instrumented #or i < num/3 
                 idc.PatchDword(fun_info[i][2] + 1, addr_afl_maybe_log - fun_info[i][2] - 5)
             else:
