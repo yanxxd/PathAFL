@@ -83,7 +83,7 @@ def main():
            
             # call    __afl_maybe_log
             if idc.__EA64__: # 64bit
-                addr_call = func + 0x15
+                addr_call = func + 0x1A
             else: # 32bit                
                 addr_call = func + 0x08
  

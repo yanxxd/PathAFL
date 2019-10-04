@@ -52,17 +52,19 @@ def IsInstrumentIns(ea):
     '''
     if idc.__EA64__: # 64bit
         '''
-.text:000000000040FA80 53                push    rbx
-.text:000000000040FA81 51                push    rcx
-.text:000000000040FA82 68 FF FF FF 07    push    7FFFFFFh               //z
-.text:000000000040FA87 48 C7 C1 FF 00 00+mov     rcx, 0FFh              //x
-.text:000000000040FA8E 48 C7 C3 F7 09 00+mov     rbx, 9F7h
-.text:000000000040FA95 E8 8E 37 00 00    call    __afl_maybe_log_fun_3
-.text:000000000040FA9A 59                pop     rcx
-.text:000000000040FA9B 59                pop     rcx
-.text:000000000040FA9C 5B                pop     rbx     
+.text:0000000000412450 48 8D 64 24 80    lea     rsp, [rsp-80h]
+.text:0000000000412455 53                push    rbx
+.text:0000000000412456 51                push    rcx
+.text:0000000000412457 68 30 E2 00 00    push    0E230h                 // z
+.text:000000000041245C 48 C7 C1 00 00 00+mov     rcx, 0                 // x
+.text:0000000000412463 48 C7 C3 19 D6 00+mov     rbx, 0D619h
+.text:000000000041246A E8 51 44 00 00    call    __afl_maybe_log_fun_3
+.text:000000000041246F 59                pop     rcx
+.text:0000000000412470 59                pop     rcx
+.text:0000000000412471 5B                pop     rbx
+.text:0000000000412472 48 8D A4 24 80 00+lea     rsp, [rsp+80h] 
         '''
-        if 0x5153 == idc.Word(ea) and 0x68 == idc.Byte(ea+2) and 0x5959 == idc.Word(ea+0x1A) and 0x5B == idc.Byte(ea+0x1C):
+        if 0x6851538024648D48 == idc.Qword(ea) and 0x0000008024A48D48 == idc.Qword(ea+0x22):
             return True
     else: # 32bit
         '''
@@ -90,12 +92,12 @@ def SetInstrumentParam():
     global g_off_y
     
     if idc.__EA64__: # 64bit
-        g_size_ins_block = 0x1D
-        g_off_set_random = 0x0E
+        g_size_ins_block = 0x2A
+        g_off_set_random = 0x13
         g_off_random = 3
-        g_off_x = 10
-        g_off_z = 3
-        g_off_y = [0x29, 0x4C]
+        g_off_x = 15
+        g_off_z = 8
+        g_off_y = [0x22, 0x45]
     else: # 32bit
         g_size_ins_block = 0x10
         g_off_set_random = 3
@@ -118,11 +120,14 @@ def GetBBLRid(ea):
     return idc.Dword(GetBBLRidAddr(ea))
 
 
-def FixFmulY(head, y):
+def FixFmulY(head, y, bFun):
     # fix y
     global g_off_y
     for off in g_off_y:
-        idc.PatchByte(head+off, y)
+        if bFun:
+            idc.PatchByte(head+off+7, y)
+        else:
+            idc.PatchByte(head+off, y)
     return
 
 
@@ -595,9 +600,10 @@ def main():
     # fix y
     for func in idautils.Functions():
         fun_name = idc.GetFunctionName(func)
-        if fun_name.find('afl_maybe_log') < 0:
-            continue
-        FixFmulY(func, y)
+        if fun_name.find('afl_maybe_log_fun') >= 0:
+            FixFmulY(func, y, True)
+        elif fun_name.find('afl_maybe_log') >= 0:
+            FixFmulY(func, y, False)
     # fix x z
     for head in Params:
         FixFmulXZ(head, Params[head][0], Params[head][1])

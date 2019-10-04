@@ -217,6 +217,7 @@ static const u8* trampoline_fmt_64 =
   "\n"
   "/* --- AFL TRAMPOLINE (64-BIT) --- */\n"
   "\n"
+	"leaq -128(%%rsp), %%rsp\n"
 	"pushq %%rbx\n"
 	"pushq %%rcx\n"
 	"pushq $0x%08x\n"								// z
@@ -226,6 +227,7 @@ static const u8* trampoline_fmt_64 =
 	"popq %%rcx\n"
   "popq %%rcx\n"
 	"popq %%rbx\n"
+	"leaq 128(%%rsp), %%rsp\n"
   "\n"
   "/* --- END --- */\n"
   "\n";
@@ -538,7 +540,7 @@ static const u8* main_payload_64 =
 //	"\n"
 //	"  __collafl_single_hash:\n"
 //	"\n"
-	"  movq  8(%rsp), %rdi\n"								// z -> rdi
+	"  movq  32(%rsp), %rdi\n"								// z -> rdi
 //	"  cmpq  $0x7FFFFFFF, %rdi\n"						//
 //	"  je   __collafl_fhash\n"	  					// z == $0x7FFFFFFF  unlikely
 
@@ -591,7 +593,8 @@ static const u8* main_payload_64 =
 	"  mov   $1, %cl\n"											// y -> rcx
 	"  shrq  %cl, %rbx\n"										// cur >> y  -> rbx
 	"  movq  %rbx, __afl_prev_loc(%rip)\n"	// cur >> y  -> prev
-	"  addq  8(%rsp), %rdi\n" 							// (cur >> x) ^ (prev >> y) + z  -> rbx
+	"  addq  32(%rsp), %rdi\n" 							// (cur >> x) ^ (prev >> y) + z  -> rbx
+	"  andq  $0xFFFF, %rdi\n"
 	"  jmp   __collafl_add_cov\n"
 
 	// x == 0xFF && z == 0xFF  __collafl_fhash
