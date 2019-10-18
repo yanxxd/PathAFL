@@ -1494,15 +1494,9 @@ static void cull_queue(void) {
 
   q = queue;
 
-#if (defined _2_GUIDED_NEIGHBOR)
-
 	if (queue_cur && g_edge_info_num) {
 
 		// a seed is selected before next_id or queue_cur. note: queue_cur maybe greater than next_id--------
-		//static u32 next_cycle = 1;
-		//static u32 next_id = 500;
-
-		//for (; q && (q->id < next_id || q->id < queue_cur->id); q = q->next) {
 		for (; q != queue_cur; q = q->next) {
 
 			if (!q->favored)
@@ -1517,8 +1511,6 @@ static void cull_queue(void) {
 			if (!q->was_fuzzed)		++pending_favored;
 		}
 
-		// calclate neighbor scores of 50~99 seeds from the current position,
-		// and about top 40% seeds were added into the queue.
 		u64 flag = 0;
 		u64 max = 0;
 		u64 sum = 0;
@@ -1526,24 +1518,11 @@ static void cull_queue(void) {
 		static u64 time_additional = 0;
 		u64 time_start = get_cur_time();
 
-#ifdef _2_GUIDED_NEIGHBOR_SORT_SELECT
 		struct queue_entry **array_entry = (struct queue_entry**)ck_alloc(sizeof(struct queue_entry*) * queued_paths);
 		u32 count_array = 0;
-#endif
 
-#ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
-//		if ( queue_cycle > next_cycle || queue_cur->id >= next_id ) {
-//
-//			if (queue_cycle > next_cycle) {
-//				++next_cycle;
-//			}
-
-		u32 next_id = queue_cur->id + 500 + R(500);
-
-		for (q = queue_cur; q && q->id < next_id; q = q->next) {
-#else
 		for (q = queue_cur; q; q = q->next) {
-#endif
+
 	    q->favored = 0;
 			q->neighbor_score = (calc_neighbor(q) << 16) + q->id;
 			sum += q->neighbor_score;
@@ -1552,14 +1531,11 @@ static void cull_queue(void) {
 				max = q->neighbor_score;
 
 			++count;
-
-#ifdef _2_GUIDED_NEIGHBOR_SORT_SELECT
 			array_entry[count_array++] = q;
-#endif
 		}
 
-
 		if (count) {
+
 			max >>= 16;
 			flag = (sum / count) >> 16;
 			//flag += (max - average) / 5;
@@ -1567,8 +1543,6 @@ static void cull_queue(void) {
 
 			AFL_LOG("cur=%d count=%d average=%x ", queue_cur->id, count, flag);
 			count = 0;
-
-#ifdef _2_GUIDED_NEIGHBOR_SORT_SELECT
 
 			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_neighbor_score);
 
@@ -1606,74 +1580,38 @@ static void cull_queue(void) {
 
 			ck_free(array_entry);
 
-#else
-
-#ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
-			for (q = queue_cur; q && q->id < next_id; q = q->next) {
-#else
-				for (q = queue_cur; q; q = q->next) {
-#endif
-
-					if (q->neighbor_score <= flag) {
-						q->favored = 0;
-						continue;
-					}
-
-					u32 j = MAP_SIZE >> 3;
-					while (j--)
-						if (q->trace_mini[j])
-							temp_v[j] &= ~q->trace_mini[j];
-
-					q->favored = 1;
-					queued_favored++;
-
-					if (!q->was_fuzzed)
-						++pending_favored;
-
-					//AFL_LOG("%06d-%x ", q->id, q->neighbor_score);
-					++count;
-				}
-
-#endif // end of  _2_GUIDED_NEIGHBOR_SORT_SELECT
-
 			time_additional += get_cur_time() - time_start;
-			AFL_LOG("favored=%d time_additional=%llus\n", count,
-					time_additional / 1000);
+			AFL_LOG("favored=%d time_additional=%llus\n", count, time_additional / 1000);
 		}
 
-#ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
-		//} // end of if ( queue_cycle > next_cycle || queue_cur->id >= next_id )
-#endif
+	} else { // if (queue_cur && g_edge_info_num)
 
+		while (q) {
+			q->favored = 0;
+			q = q->next;
+		}
+
+		/* Let's see if anything in the bitmap isn't captured in temp_v.
+			 If yes, and if it has a top_rated[] contender, let's use it. */
+
+		for (i = 0; i < MAP_SIZE; i++)
+			if (top_rated[i] && (temp_v[i >> 3] & (1 << (i & 7)))) {
+
+				u32 j = MAP_SIZE >> 3;
+
+				/* Remove all bits belonging to the current entry from temp_v. */
+
+				while (j--)
+					if (top_rated[i]->trace_mini[j])
+						temp_v[j] &= ~top_rated[i]->trace_mini[j];
+
+				top_rated[i]->favored = 1;
+				queued_favored++;
+
+				if (!top_rated[i]->was_fuzzed) pending_favored++;
+
+			}
 	} // end of if (queue_cur && g_edge_info_num)
-#endif //end of (defined _2_GUIDED_NEIGHBOR)
-
-
-  while (q) {
-    q->favored = 0;
-    q = q->next;
-  }
-
-  /* Let's see if anything in the bitmap isn't captured in temp_v.
-     If yes, and if it has a top_rated[] contender, let's use it. */
-
-  for (i = 0; i < MAP_SIZE; i++)
-    if (top_rated[i] && (temp_v[i >> 3] & (1 << (i & 7)))) {
-
-      u32 j = MAP_SIZE >> 3;
-
-      /* Remove all bits belonging to the current entry from temp_v. */
-
-      while (j--)
-        if (top_rated[i]->trace_mini[j])
-          temp_v[j] &= ~top_rated[i]->trace_mini[j];
-
-      top_rated[i]->favored = 1;
-      queued_favored++;
-
-      if (!top_rated[i]->was_fuzzed) pending_favored++;
-
-    }
 
   q = queue;
 
