@@ -293,6 +293,7 @@ static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 #ifdef _1_PATH_HASH
 static u32 g_new_paths_ratio = 0;			// percentage of new paths, default 0%
 static u32 g_new_paths;
+static u8  g_is_last_pat = 0;					// Is last path is new path?
 static struct queue_entry* g_path_hash[MAP_SIZE] = {0};
 #endif
 
@@ -383,6 +384,8 @@ unsigned int g_edge_info_num = 0;
 unsigned short g_edge_info_index[MAP_SIZE];
 unsigned int g_guide_type = 1;		//neighbor guided type. 0:only count child  1:+call  2:+call+mem. default 1
 
+u64 g_neighbor_score_base = 0xFFFFFFFF;	// if score of path is larger than this value, add it to queue.
+
 static int load_edge_neighbor_file(char *fn) {
 
 	struct stat statbuf;
@@ -416,6 +419,41 @@ static void free_edge_neighbor(){
 	ck_free(g_edge_info);
 }
 
+
+static inline u32 calc_edge_neighbor(u32 hash) {
+
+	u32 score = 0;
+
+	for (u32 j = g_edge_info_index[hash]; j < g_edge_info_num; ++j) {
+		//index is over or this neighbor has been covered
+		if (g_edge_info[j].hash != hash || 0xFF != virgin_bits[g_edge_info[j].hash_neighbor])
+			break;
+
+		//num += g_edge_info[j].num_edge + 1;
+		if (0 == g_guide_type){
+			score += 1;
+		} else if (1 == g_guide_type) {
+			score += 1 + (g_edge_info[j].num_call << 1);
+		} else if (2 == g_guide_type) {
+			score += 1 + (g_edge_info[j].num_call << 1) + (g_edge_info[j].num_mem << 2);
+		}
+
+	}
+
+	return score;
+}
+
+static u64 calc_cur_path_neighbor() {
+
+	u64 num = 0;
+
+	for(u32 i = 0; i < MAP_SIZE; ++i)
+		if( trace_bits[i] )
+			num += calc_edge_neighbor(i);
+
+	return num;
+}
+
 static u64 calc_neighbor(struct queue_entry *q) {
 
 	//u16 hash;	//edge hash
@@ -423,26 +461,9 @@ static u64 calc_neighbor(struct queue_entry *q) {
 
 	if(!q->trace_mini) return num; //That is unlikely to happen
 
-	for(int i = 0; i < MAP_SIZE; ++i){
-
-		if( !(q->trace_mini[i>>3] & (1<<(i&7))) )
-			continue;
-
-		for (u16 j = g_edge_info_index[i]; j < g_edge_info_num; ++j) {
-			//index is over or this neighbor has been covered
-			if (g_edge_info[j].hash != i || 0xFF != virgin_bits[g_edge_info[j].hash_neighbor])
-				break;
-
-			//num += g_edge_info[j].num_edge + 1;
-			if (0 == g_guide_type){
-				num += 1;
-			} else if (1 == g_guide_type) {
-				num += 1 + (g_edge_info[j].num_call << 1);
-			} else if (2 == g_guide_type) {
-				num += 1 + (g_edge_info[j].num_call << 1) + (g_edge_info[j].num_mem << 2);
-			}
-		}
-	}
+	for(u32 i = 0; i < MAP_SIZE; ++i)
+		if( q->trace_mini[i>>3] & (1<<(i&7)) )
+			num += calc_edge_neighbor(i);
 
 	return num;
 }
@@ -1442,6 +1463,14 @@ static void update_bitmap_score(struct queue_entry* q) {
 }
 
 
+#ifdef _2_GUIDED_NEIGHBOR_SORT_SELECT
+// from big to small
+static int compare_neighbor_score(const void* p1, const void* p2) {
+  return (*(struct queue_entry**)p2)->neighbor_score - (*(struct queue_entry**)p1)->neighbor_score;
+}
+#endif
+
+
 /* The second part of the mechanism discussed above is a routine that
    goes over top_rated[] entries, and then sequentially grabs winners for
    previously-unseen bytes (temp_v) and marks them as favored, at least
@@ -1474,28 +1503,33 @@ static void cull_queue(void) {
 		//static u32 next_id = 500;
 
 		//for (; q && (q->id < next_id || q->id < queue_cur->id); q = q->next) {
-//		for (; q != queue_cur; q = q->next) {
-//
-//			if (!q->favored)
-//				continue;
-//			// set temp_v to zero for all the edges that the q covers
-//			u32 j = MAP_SIZE >> 3;
-//			while (j--)
-//				if (q->trace_mini[j])
-//					temp_v[j] &= ~q->trace_mini[j];
-//
-//			++queued_favored;
-//			if (!q->was_fuzzed)		++pending_favored;
-//		}
+		for (; q != queue_cur; q = q->next) {
+
+			if (!q->favored)
+				continue;
+			// set temp_v to zero for all the edges that the q covers
+			u32 j = MAP_SIZE >> 3;
+			while (j--)
+				if (q->trace_mini[j])
+					temp_v[j] &= ~q->trace_mini[j];
+
+			++queued_favored;
+			if (!q->was_fuzzed)		++pending_favored;
+		}
 
 		// calclate neighbor scores of 50~99 seeds from the current position,
 		// and about top 40% seeds were added into the queue.
-		u64 average = 0;
+		u64 flag = 0;
 		u64 max = 0;
 		u64 sum = 0;
-		u16 count = 0;
+		u32 count = 0;
 		static u64 time_additional = 0;
 		u64 time_start = get_cur_time();
+
+#ifdef _2_GUIDED_NEIGHBOR_SORT_SELECT
+		struct queue_entry **array_entry = (struct queue_entry**)ck_alloc(sizeof(struct queue_entry*) * queued_paths);
+		u32 count_array = 0;
+#endif
 
 #ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
 //		if ( queue_cycle > next_cycle || queue_cur->id >= next_id ) {
@@ -1504,35 +1538,83 @@ static void cull_queue(void) {
 //				++next_cycle;
 //			}
 
-		  u32 next_id = queue_cur->id + 500 + R(500);
+		u32 next_id = queue_cur->id + 500 + R(500);
 
-			for (q = queue_cur; q && q->id < next_id; q = q->next) {
+		for (q = queue_cur; q && q->id < next_id; q = q->next) {
 #else
-			for (q = queue_cur; q; q = q->next) {
+		for (q = queue_cur; q; q = q->next) {
 #endif
+	    q->favored = 0;
+			q->neighbor_score = (calc_neighbor(q) << 16) + q->id;
+			sum += q->neighbor_score;
 
-				q->neighbor_score = (calc_neighbor(q) << 16) + q->id;
-				sum += q->neighbor_score;
+			if (q->neighbor_score > max)
+				max = q->neighbor_score;
 
-				if (q->neighbor_score > max)
-					max = q->neighbor_score;
+			++count;
 
-				++count;
-			}
+#ifdef _2_GUIDED_NEIGHBOR_SORT_SELECT
+			array_entry[count_array++] = q;
+#endif
+		}
 
-			if (count) {
-				average = sum / count;
-				average += (max - average) / 5;
 
-				AFL_LOG("cur=%d count=%d average=%x ", queue_cur->id, count, average);
-				count = 0;
+		if (count) {
+			max >>= 16;
+			flag = (sum / count) >> 16;
+			//flag += (max - average) / 5;
+			g_neighbor_score_base = flag + (max - flag) / 2;
+
+			AFL_LOG("cur=%d count=%d average=%x ", queue_cur->id, count, flag);
+			count = 0;
+
+#ifdef _2_GUIDED_NEIGHBOR_SORT_SELECT
+
+			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_neighbor_score);
+
+			for (i = 0; i < count_array; i++) {
+
+				q = array_entry[i];
+				if (!q->trace_mini)
+					continue;
+
+				u32 j = MAP_SIZE >> 3;
+				u8 b = 0;
+
+				while (j--)
+					if ( (temp_v[j] & ~q->trace_mini[j]) != temp_v[j] ) { // has new covarage
+						b = 1;	++j;
+						break;
+					}
+
+				if (!b)
+					continue;
+
+				while (j--)
+					temp_v[j] &= ~q->trace_mini[j];
+
+				q->favored = 1;
+				queued_favored++;
+
+				if (!q->was_fuzzed)
+					++pending_favored;
+
+				if (++count <= 5)
+					AFL_LOG("%x ", q->neighbor_score);
+
+			} // end of for (i = 0; i < count; i++)
+
+			ck_free(array_entry);
+
+#else
+
 #ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
-				for (q = queue_cur; q && q->id < next_id; q = q->next) {
+			for (q = queue_cur; q && q->id < next_id; q = q->next) {
 #else
 				for (q = queue_cur; q; q = q->next) {
 #endif
 
-					if (q->neighbor_score <= average) {
+					if (q->neighbor_score <= flag) {
 						q->favored = 0;
 						continue;
 					}
@@ -1552,16 +1634,20 @@ static void cull_queue(void) {
 					++count;
 				}
 
-				time_additional += get_cur_time() - time_start;
-				AFL_LOG("favored=%d time_additional=%llus\n", count, time_additional/1000);
-			}
+#endif // end of  _2_GUIDED_NEIGHBOR_SORT_SELECT
+
+			time_additional += get_cur_time() - time_start;
+			AFL_LOG("favored=%d time_additional=%llus\n", count,
+					time_additional / 1000);
+		}
 
 #ifdef _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
-		//} // end of if ( queue_cycle > next_cycle || queue_cur->id >= next_id ) {
+		//} // end of if ( queue_cycle > next_cycle || queue_cur->id >= next_id )
 #endif
 
-	} //end of if (queue_cur)
+	} // end of if (queue_cur && g_edge_info_num)
 #endif //end of (defined _2_GUIDED_NEIGHBOR)
+
 
   while (q) {
     q->favored = 0;
@@ -3370,8 +3456,13 @@ static u8* describe_op(u8 hnb) {
   }
 
   if (hnb == 2) strcat(ret, ",+cov");
+
 #ifdef _1_PATH_HASH
-  if (hnb == 3) strcat(ret, ",+pat");
+  if (hnb == 3) {
+  	strcat(ret, ",+pat");
+  	g_is_last_pat = 1;
+  }
+  else g_is_last_pat = 0;
 #endif
 
   return ret;
@@ -3450,8 +3541,10 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 #ifdef _1_PATH_HASH
       // Don't have new bit. Judging whether there is a new path ?
       if ( FAULT_TMOUT == fault // path_hash is inaccurate when timeout.
+      		|| g_is_last_pat
       		|| g_new_paths >= queued_paths * g_new_paths_ratio / (100+g_new_paths_ratio)
-      		|| R(100) < 67 )
+      		//|| R(100) < 67
+					)
       	return 0;
 
       // check hash when time interval > 3s and don't find new paths
@@ -3468,7 +3561,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
       if ( !has_new_path() ) return 0;
 
-      if ( count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries)
+      if ( count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries
+      		|| calc_cur_path_neighbor() < g_neighbor_score_base )
       	return 0;
 
       ++g_new_paths;
