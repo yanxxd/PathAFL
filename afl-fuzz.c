@@ -228,7 +228,7 @@ struct queue_entry {
 
 #ifdef _2_GUIDED_NEIGHBOR
 	u32 id;															/* File id										      */
-	u64 neighbor_score;									/* Neighbor score							      */
+	u64 path_score;											/* Path score							      */
 #endif
   u8* fname;                          /* File name for the test case      */
   u32 len;                            /* Input length                     */
@@ -295,6 +295,7 @@ static u32 g_new_paths_ratio = 0;			// percentage of new paths, default 0%
 static u32 g_new_paths;
 static u8  g_is_last_pat = 0;					// Is last path is new path?
 static struct queue_entry* g_path_hash[MAP_SIZE] = {0};
+static u32 g_cov_count[MAP_SIZE]; 		// EDGE_HEAT. Log count of testcases which coverage edge i.	*/
 #endif
 
 /* Fuzzing stages */
@@ -373,18 +374,20 @@ int afl_log_real(const char *fmt, ...)
 #ifdef _2_GUIDED_NEIGHBOR
 
 struct edge_neighbor {
-	unsigned short hash;						//hash of edge
-	unsigned short hash_neighbor;	//hash of neighbor edge
-	unsigned short num_call;				//num of edges neighbor edge goes through. Only count 1st layer call.
-	unsigned short num_mem;				//num of *alloc and *free function. Only count 1st layer call.
+	u32 hash;						//hash of edge
+	u32 hash_neighbor;	//hash of neighbor edge
+	u16 num_call;				//num of edges neighbor edge goes through. Only count 1st layer call.
+	u16 num_mem;				//num of *alloc and *free function. Only count 1st layer call.
 };
 
-struct edge_neighbor *g_edge_info = NULL;
-unsigned int g_edge_info_num = 0;
-unsigned short g_edge_info_index[MAP_SIZE];
-unsigned int g_guide_type = 1;		//neighbor guided type. 0:only count child  1:+call  2:+call+mem. default 1
+struct edge_neighbor *g_edge_info = NULL;		// array
+u32 g_edge_info_num = 0;					// numbuer of elements in g_edge_info
+u32 g_edge_info_index[MAP_SIZE];	// edge's initial index in g_edge_info
+u16 g_guide_type = 1;							// neighbor guided type. 0:only count child  1:+call  2:+call+mem. default 1
 
-u64 g_neighbor_score_base = 0xFFFFFFFF;	// if score of path is larger than this value, add it to queue.
+u32 g_nb_count[MAP_SIZE]; 				// untouched neighbor count of edge
+
+float g_path_score_base = 0xFFFFFFFF;	// if score of path is larger than this value, add it to queue.
 
 static int load_edge_neighbor_file(char *fn) {
 
@@ -398,10 +401,10 @@ static int load_edge_neighbor_file(char *fn) {
 	ck_read(fd, g_edge_info, statbuf.st_size, fn);
 	close(fd);
 
-	memset(g_edge_info_index, 0, sizeof(g_edge_info_index));
+	memset(g_edge_info_index, 0xFF, sizeof(g_edge_info_index));
 	g_edge_info_num = statbuf.st_size / sizeof(struct edge_neighbor);
 
-	unsigned short last_hash = g_edge_info[0].hash;
+	u32 last_hash = g_edge_info[0].hash;
 	g_edge_info_index[last_hash] = 0;
 
 	for(int i=1; i<g_edge_info_num; ++i){
@@ -425,9 +428,13 @@ static inline u32 calc_edge_neighbor(u32 hash) {
 	u32 score = 0;
 
 	for (u32 j = g_edge_info_index[hash]; j < g_edge_info_num; ++j) {
-		//index is over or this neighbor has been covered
-		if (g_edge_info[j].hash != hash || 0xFF != virgin_bits[g_edge_info[j].hash_neighbor])
+		//index is over
+		if (g_edge_info[j].hash != hash)
 			break;
+
+		//this neighbor has been covered
+		if ( 0xFF != virgin_bits[g_edge_info[j].hash_neighbor] )
+			continue;
 
 		//num += g_edge_info[j].num_edge + 1;
 		if (0 == g_guide_type){
@@ -443,13 +450,20 @@ static inline u32 calc_edge_neighbor(u32 hash) {
 	return score;
 }
 
-static u64 calc_cur_path_neighbor() {
+// call this function after fuzz one seed.
+static void update_neighbor_count(){
+
+	for(u32 i = 0; i < MAP_SIZE; ++i)
+		g_nb_count[i] = calc_edge_neighbor(i);
+}
+
+/*static u64 calc_cur_path_neighbor() {
 
 	u64 num = 0;
 
 	for(u32 i = 0; i < MAP_SIZE; ++i)
 		if( trace_bits[i] )
-			num += calc_edge_neighbor(i);
+			num += g_nb_count[i];
 
 	return num;
 }
@@ -463,9 +477,35 @@ static u64 calc_neighbor(struct queue_entry *q) {
 
 	for(u32 i = 0; i < MAP_SIZE; ++i)
 		if( q->trace_mini[i>>3] & (1<<(i&7)) )
-			num += calc_edge_neighbor(i);
+			num += g_nb_count[i]; //calc_edge_neighbor(i); don't need calc every time.
 
 	return num;
+}*/
+
+static float calc_cur_path_score() {
+
+	float score = 0.0;
+
+	for(u32 i = 0; i < MAP_SIZE; ++i)
+		if( trace_bits[i] && g_cov_count[i] ){
+			score += 65536 * ( g_nb_count[i] + 1.0 ) / g_cov_count[i];
+		}
+
+	return score * 65536.0 / (queue_cur->exec_us * queue_cur->len);
+}
+
+static float calc_path_score(struct queue_entry *q) {
+
+	float score = 0.0;
+
+	if(!q->trace_mini) return 0; //That is unlikely to happen
+
+	for(u32 i = 0; i < MAP_SIZE; ++i)
+		if( (q->trace_mini[i>>3] & (1<<(i&7))) && g_cov_count[i] ){
+			score += 1024 * ( g_nb_count[i] + 1.0 ) / g_cov_count[i];
+		}
+
+	return score * 1024.0 / (q->exec_us * q->len);
 }
 
 #endif
@@ -1465,8 +1505,8 @@ static void update_bitmap_score(struct queue_entry* q) {
 
 #ifdef _2_GUIDED_NEIGHBOR_SORT_SELECT
 // from big to small
-static int compare_neighbor_score(const void* p1, const void* p2) {
-  return (*(struct queue_entry**)p2)->neighbor_score - (*(struct queue_entry**)p1)->neighbor_score;
+static int compare_path_score(const void* p1, const void* p2) {
+  return (*(struct queue_entry**)p2)->path_score - (*(struct queue_entry**)p1)->path_score;
 }
 #endif
 
@@ -1524,11 +1564,11 @@ static void cull_queue(void) {
 		for (q = queue_cur; q; q = q->next) {
 
 	    q->favored = 0;
-			q->neighbor_score = (calc_neighbor(q) << 16) + q->id;
-			sum += q->neighbor_score;
+			q->path_score = calc_path_score(q);
+			sum += q->path_score;
 
-			if (q->neighbor_score > max)
-				max = q->neighbor_score;
+			if (q->path_score > max)
+				max = q->path_score;
 
 			++count;
 			array_entry[count_array++] = q;
@@ -1536,20 +1576,19 @@ static void cull_queue(void) {
 
 		if (count) {
 
-			max >>= 16;
-			flag = (sum / count) >> 16;
-			//flag += (max - average) / 5;
-			g_neighbor_score_base = flag + (max - flag) / 2;
+			flag = sum / count;
+			//flag += (max - flag) / 5;
+			g_path_score_base = flag + (max - flag) / 2;
 
-			AFL_LOG("cur=%d count=%d average=%x ", queue_cur->id, count, flag);
+			AFL_LOG("cur=%d count=%d avg=%x ", queue_cur->id, count, flag);
 			count = 0;
 
-			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_neighbor_score);
+			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_path_score);
 
 			for (i = 0; i < count_array; i++) {
 
 				q = array_entry[i];
-				if (!q->trace_mini)
+				if (q->id < queue_cur->id || !q->trace_mini)
 					continue;
 
 				u32 j = MAP_SIZE >> 3;
@@ -1573,8 +1612,8 @@ static void cull_queue(void) {
 				if (!q->was_fuzzed)
 					++pending_favored;
 
-				if (++count <= 5)
-					AFL_LOG("%x ", q->neighbor_score);
+				if (++count <= 10)
+					AFL_LOG("%d-%x ", q->id, q->path_score);
 
 			} // end of for (i = 0; i < count; i++)
 
@@ -2912,11 +2951,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
       goto abort_calibration;
     }
 
-#ifdef _1_PATH_HASH
     cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-#else
-    cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-#endif
 
     if (q->exec_cksum != cksum) {
 
@@ -3478,10 +3513,12 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #ifdef _1_PATH_HASH
       // Don't have new bit. Judging whether there is a new path ?
-      if ( FAULT_TMOUT == fault // path_hash is inaccurate when timeout.
+      if ( FAULT_TMOUT == fault 			// path_hash is inaccurate when timeout.
+      		|| queue_cur->var_behavior	// if path is variable, meybe often appear new path_hash, skip.
       		|| g_is_last_pat
       		|| g_new_paths >= queued_paths * g_new_paths_ratio / (100+g_new_paths_ratio)
-      		//|| R(100) < 67
+					// || get_cur_ms() - last_path_time < 3000  // need last org afl path time
+      		// || R(100) < 67
 					)
       	return 0;
 
@@ -3492,15 +3529,12 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 //      	last_paths_num = g_new_paths + queued_paths;
 //      	return 0;
 //      }
-//
-//      time_t cur_time = time(0);
-//      if (get_cur_time() - last_path_time < 3000)
-//      	return 0;
+
 
       if ( !has_new_path() ) return 0;
 
-      if ( count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries
-      		|| calc_cur_path_neighbor() < g_neighbor_score_base )
+      if ( /*count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries
+      		||*/ calc_cur_path_score() < g_path_score_base )
       	return 0;
 
       ++g_new_paths;
@@ -4940,11 +4974,7 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
 
       /* Note that we don't keep track of crashes or hangs here; maybe TODO? */
 
-#ifdef _1_PATH_HASH
       cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-#else
-      cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-#endif
 
       /* If the deletion had no impact on the trace, make it permanent. This
          isn't perfect for variable-path inputs, but we're just making a
@@ -5499,6 +5529,15 @@ static u8 fuzz_one(char** argv) {
   }
 
   memcpy(out_buf, in_buf, len);
+
+
+  /*********************
+   * EDGE_HEAT *
+   *********************/
+  for (u32 i = 0; i < MAP_SIZE; ++i) {
+  	g_cov_count[i] += trace_bits[i] ? 1 : 0;
+  }
+
 
   /*********************
    * PERFORMANCE SCORE *
@@ -8539,6 +8578,9 @@ int main(int argc, char** argv) {
     if (!stop_soon && exit_1) stop_soon = 2;
 
     if (stop_soon) break;
+
+    // EDGE_COUNT
+    if( !skipped_fuzz ) update_neighbor_count();
 
     queue_cur = queue_cur->next;
     current_entry++;

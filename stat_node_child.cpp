@@ -22,18 +22,18 @@
 struct edge_info {
 	u64 head_addr;			//addr of head bbl
 	u64 tail_addr;			//addr of tail bbl
-	u16 head_id;				//random id of head bbl
-	u16 tail_id;				//random id of tail bbl
-	u16 hash;						//hash of edge
+	u32 head_id;				//random id of head bbl
+	u32 tail_id;				//random id of tail bbl
+	u32 hash;						//hash of edge
 	u16 num_call;				//num of call in edge.
 	u16 num_mem;				//num of mem function in edge.
 };
 
 struct edge_neighbor {
-	unsigned short hash;						//hash of edge
-	unsigned short hash_neighbor;	//hash of neighbor edge
-	unsigned short num_call;				//num of call in edge. Only count 1st layer call.
-	unsigned short num_mem;				//num of *alloc and *free function in edge. Only count 1st layer call.
+	u32 hash;						//hash of edge
+	u32 hash_neighbor;	//hash of neighbor edge
+	u16 num_call;				//num of call in edge. Only count 1st layer call.
+	u16 num_mem;				//num of *alloc and *free function in edge. Only count 1st layer call.
 };
 
 
@@ -41,8 +41,8 @@ typedef std::multimap<u64, edge_info> mmap_head_edge;
 typedef std::pair<u64, edge_info> pair_head_edge;
 
 struct edge_neighbor *g_edge_info = NULL;
-unsigned int g_edge_info_num = 0;
-unsigned short g_edge_info_index[MAP_SIZE];
+u32 g_edge_info_num = 0;
+u32 g_edge_info_index[MAP_SIZE];
 
 int comp_hash(const void *a, const void *b) {
 	return (((struct edge_info*)a)->hash - ((struct edge_info*)b)->hash);
