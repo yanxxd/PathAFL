@@ -27,7 +27,7 @@
 #define _3_COLLAFL
 
 /* Version string: */
-#define VERSION             "2.52b-Col-Path-v7.0"
+#define VERSION             "2.52b-Col-Path-v8.0"
 
 /******************************************************
  *                                                    *
