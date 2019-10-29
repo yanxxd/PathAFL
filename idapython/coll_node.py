@@ -412,10 +412,13 @@ def GetCFG():
     bbls = {}   # head -> bbl
     bbls2 = {}  # tail -> bbl
     edges = set()   # set of (tail, head) or (head, head)
+
+    #bbls_t, bbls2_t, edges_t, SingleBBS_t, MultiBBS_t = GetFunEdgesAndBbls(0x4AEC90)  # deubg
+
     for func in idautils.Functions():
         if IsSanFunc(func):
             continue
-        #print('%x %s') % (func, idc.GetFunctionName(func))
+        print('%x %s') % (func, idc.GetFunctionName(func))
         bbls_t, bbls2_t, edges_t, SingleBBS_t, MultiBBS_t = GetFunEdgesAndBbls(func)
         bbls.update(bbls_t)
         bbls2.update(bbls2_t)
@@ -454,7 +457,7 @@ def CalcFmul(MultiBBS, max_value):
             cur = GetBBLRid(head)
             bFindXZ = False
             for x in range(0, g_map_size):
-                for z in range(0, g_map_size * 64):
+                for z in range(0, g_map_size * 32):
                     tmpHashSet = set()
                     for pred_bbl in MultiBBS[head]:
                         pred = GetBBLRid(pred_bbl[0])
@@ -477,11 +480,11 @@ def CalcFmul(MultiBBS, max_value):
             if not bFindXZ:
                 print('%x' % head)
                 Unsolv.add(head)
-                if len(Unsolv) >= 10 and float(len(Unsolv))/len(bbls) >= 0.001:   # this y is failed
+                if len(Unsolv) >= 10 and float(len(Unsolv))/len(MultiBBS) >= 0.01:   # this y is failed
                     break
             
         print('Solv=%d Unsolv=%d y=%d' % (len(Solv), len(Unsolv), y))
-        if len(Unsolv) < 10 or float(len(Unsolv))/len(bbls) < 0.001:              # success
+        if len(Unsolv) < 10 or float(len(Unsolv))/len(MultiBBS) < 0.01:              # success
             bOk = True
             break
 
@@ -531,11 +534,11 @@ def SaveMultiBBSEdgeInfo(MultiBBS, bbls, max, f):
 def main():
     
     idaapi.msg("Loading CollAFL_Node_Extract\n")
-    time_start = time.time()
     idb_path = idc.GetIdbPath()
     save_path = idb_path.split('.')[0] + '_node_relation.txt'
     f = open(save_path, 'w')
     print(save_path)
+    time_start = time.time()
         
     global g_map_size
         
@@ -573,7 +576,7 @@ def main():
                 MultiBBS[func].append(bbls[head])   # add Pred
     
 
-    print('bbls=%d edges=%d SingleBBS=%d' % (len(bbls), len(edges), len(SingleBBS)))
+    print('bbls=%d edges=%d SingleBBS=%d MultiBBS=%d' % (len(bbls), len(edges), len(SingleBBS), len(MultiBBS)))
     #for head in bbls:
     #    if head not in SingleBBS and head not in MultiBBS:
     #        print('%x' % head)
@@ -581,11 +584,13 @@ def main():
         
 
     #2: Keys = AssignUniqRandomKeysToBBs(BBS)
+    print('AssignUniqRandomKeysToBBs')  
     AssignUniqRandomKeysToBBs(bbls, max_value)
 
     #3-4 Fixate algorithms. Preds and Keys are common arguments
     #3: (Hashes, Params, Solv, Unsolv) = CalcFmul(MultiBBS)
     # 0, set(), {}       # head -> (x, z)
+    print('CalcFmul')  
     y, Hashes, Params = CalcFmul(MultiBBS, max_value);
     if 0 == len(Hashes) or 0 == len(Params):
         print('CalcFmul error!')
@@ -598,6 +603,7 @@ def main():
     #5-7 Instrument program with coverage tracking.
     #5: InstrumentFmul(Solv, Params)
     # fix y
+    print('InstrumentFmul')  
     for func in idautils.Functions():
         fun_name = idc.GetFunctionName(func)
         if fun_name.find('afl_maybe_log_fun') >= 0:
@@ -613,10 +619,13 @@ def main():
     pass
 
     #7: InstrumentFsingle(SingleBBS, FreeHashes)
+    print('InstruFsingleAndSaveEdgeInfo')  
     InstruFsingleAndSaveEdgeInfo(SingleBBS, Hashes, bbls, max_value, f)
-
+    print(str(time.time() - time_start) + 's ' + 'fix fsingle')  
+    
+    print('SaveMultiBBSEdgeInfo')  
     SaveMultiBBSEdgeInfo(MultiBBS, bbls, max_value, f)
-
+    
     f.write('analyse time: ' + str(time.time() - time_start) + 's\n')
     f.close()
     print('analyse time: ' + str(time.time() - time_start) + 's\n')
