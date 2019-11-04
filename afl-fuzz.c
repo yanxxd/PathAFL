@@ -1600,7 +1600,7 @@ static void cull_queue(void) {
 			g_edge_score_avg = flag;
 			g_edge_score_high = flag + (max - flag) / 2;
 
-			AFL_LOG("cur=%d count=%d avg=%.3f base=%.3f ", queue_cur->id, count, flag, g_edge_score_high);
+			AFL_LOG("cur=%d count=%d avg=%.3f high=%.3f ", queue_cur->id, count, flag, g_edge_score_high);
 
 			count_array = count;
 			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_path_score);
