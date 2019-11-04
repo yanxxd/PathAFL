@@ -254,7 +254,7 @@ struct queue_entry {
   u32 tc_ref;                         /* Trace bytes ref count            */
 
 #ifdef _1_PATH_HASH
-  u16 path_hash;
+  u32 path_hash;
   struct queue_entry *next_hash;			/* Next element with same path hash */
 #endif
 
@@ -1157,7 +1157,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
 #ifdef _1_PATH_HASH
 static inline u8 has_new_path(/*u32 cksum*/) {
 
-	u16 path_hash = *(u16*)(trace_bits + MAP_SIZE);
+	u32 path_hash = *(u32*)(trace_bits + MAP_SIZE);
 
 	if (!g_path_hash[path_hash])
 		return 1;
@@ -1600,7 +1600,7 @@ static void cull_queue(void) {
 			g_edge_score_avg = flag;
 			g_edge_score_high = flag + (max - flag) / 2;
 
-			AFL_LOG("cur=%d count=%d avg=%.3f base=%.3f ", queue_cur->id, count, flag, g_edge_score_high);
+			AFL_LOG("cur=%d count=%d avg=%.3f high=%.3f ", queue_cur->id, count, flag, g_edge_score_high);
 
 			count_array = count;
 			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_path_score);
@@ -3006,7 +3006,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
         q->exec_cksum = cksum;
         memcpy(first_trace, trace_bits, MAP_SIZE);
 #ifdef _1_PATH_HASH
-        q->path_hash = *(u16*)(trace_bits + MAP_SIZE);
+        q->path_hash = *(u32*)(trace_bits + MAP_SIZE);
 #endif
 
       }
@@ -3592,7 +3592,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     }
 
 #ifdef _1_PATH_HASH
-    queue_top->path_hash = *(u16*)(trace_bits + MAP_SIZE);
+    queue_top->path_hash = *(u32*)(trace_bits + MAP_SIZE);
 #endif
     queue_top->exec_cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
