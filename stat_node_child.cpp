@@ -148,7 +148,7 @@ int main(int argc, char **argv)
     fprintf(stdout, "\r%d/%d time=%ds", i, num_ei, (get_cur_time() - time_start)/1000);
     fflush(stdout);
 
-    // find all value. method 1
+    // find all edges from head_addr. method 1: use find().
 		auto it = mmhe.find(ei[i].head_addr);
 		int count = mmhe.count(ei[i].head_addr);
 		for (int j=0; j < count; ++j, ++it) {
@@ -162,7 +162,7 @@ int main(int argc, char **argv)
 
 		if (ei[i].head_addr == ei[i].tail_addr)
 			continue;
-    // find all value. method 2
+    // find all edges from tail_addr. method 2: use equal_range().
 		auto p = mmhe.equal_range(ei[i].tail_addr);
 		for (it = p.first; it != p.second; ++it) {
 			if (it->second.hash == ei[i].hash) continue;  // don't count self

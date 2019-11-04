@@ -159,7 +159,7 @@ static const u8* trampoline_fmt_64_fun =
 	"pushq %%rcx\n"
 	"pushq $0x%08x\n"								// z
 	"movq  $0, %%rcx\n"							// x
-	"movq  $0x%08x, %%rbx\n"
+	"movq  $0x%08x, %%rbx\n"				// rid
 	"call __afl_maybe_log_fun\n"
 	"popq %%rcx\n"
 	"popq %%rcx\n"
@@ -515,7 +515,7 @@ static const u8* main_payload_64_fun =
 	"  shrq  %cl, %rbx\n"										// cur >> y  -> rbx
 	"  movq  %rbx, __afl_prev_loc(%rip)\n"	// cur >> y  -> prev
 	"  addq  32(%rsp), %rdi\n" 							// (cur >> x) ^ (prev >> y) + z  -> rbx
-  "  andq  $0xFFFF, %rdi\n"
+  "  andq  $0x1FFFF, %rdi\n"
 	"  jmp   __collafl_add_cov_fun\n"
 #endif
   "\n"
