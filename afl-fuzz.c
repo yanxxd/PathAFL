@@ -228,8 +228,9 @@ struct queue_entry {
 
 #ifdef _2_GUIDED_NEIGHBOR
 	u32 id;															/* File id										      */
-	float edge_score;										/* Path score based edge heat and neigbhor count  */
-	float path_score;										/* used in cull_queue(). edge_score * 65536.0 / exec_us  */
+	u32 neigbhor;												/* untouched neigbhor count							      */
+																			/* edge_score = Path score based edge heat and neigbhor count  */
+	//float path_score;									/* used in cull_queue(). edge_score * 65536.0 / exec_us  */
 #endif
   u8* fname;                          /* File name for the test case      */
   u32 len;                            /* Input length                     */
@@ -388,8 +389,8 @@ u16 g_guide_type = 1;							// neighbor guided type. 0:only count child  1:+call
 
 u32 g_nb_count[MAP_SIZE]; 				// untouched neighbor count of edge
 
-float g_edge_score_high = 0xFFFFFFFF;	// if score of path is larger than this value, add it to queue.
-float g_edge_score_avg = 0xFFFFFFFF;	// avarage edge score.
+u32 g_neighbor_high = 0xFFFFFFFF;	// if score of path is larger than this value, add it to queue.
+u32 g_neighbor_avg  = 0xFFFFFFFF;	// avarage edge score.
 
 static int load_edge_neighbor_file(char *fn) {
 
@@ -1157,7 +1158,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
 #ifdef _1_PATH_HASH
 static inline u8 has_new_path(/*u32 cksum*/) {
 
-	u32 path_hash = *(u32*)(trace_bits + MAP_SIZE);
+	u32 path_hash = *(u32*)(trace_bits + MAP_SIZE) & (MAP_SIZE - 1);
 
 	if (!g_path_hash[path_hash])
 		return 1;
@@ -1520,15 +1521,15 @@ static void update_bitmap_score(struct queue_entry* q) {
 
 #ifdef _2_GUIDED_NEIGHBOR_SORT_SELECT
 // from big to small
-static int compare_path_score(const void* p1, const void* p2) {
-	float f1 = (*(struct queue_entry**)p1)->path_score;
-	float f2 = (*(struct queue_entry**)p2)->path_score;
-	if (f1 < f2)
-		return 1;
-	else if (f1 > f2)
-		return -1;
-	return 0;
-  //return (*(struct queue_entry**)p2)->edge_score - (*(struct queue_entry**)p1)->edge_score;
+static int compare_neigbhor_score(const void* p1, const void* p2) {
+//	float f1 = (*(struct queue_entry**)p1)->path_score;
+//	float f2 = (*(struct queue_entry**)p2)->path_score;
+//	if (f1 < f2)
+//		return 1;
+//	else if (f1 > f2)
+//		return -1;
+//	return 0;
+  return (*(struct queue_entry**)p2)->neigbhor - (*(struct queue_entry**)p1)->neigbhor;
 }
 #endif
 
@@ -1543,7 +1544,7 @@ static void cull_queue(void) {
 
   struct queue_entry* q;
   static u8 temp_v[MAP_SIZE >> 3];
-  u32 i;
+  u32 i, j;
 
   if (dumb_mode || !score_changed) return;
 
@@ -1564,15 +1565,15 @@ static void cull_queue(void) {
 			if (!q->favored)
 				continue;
 			// set temp_v to zero for all the edges that the q covers
-			u32 j = MAP_SIZE >> 3;
+			j = MAP_SIZE >> 3;
 			while (j--)
 				if (q->trace_mini[j])
 					temp_v[j] &= ~q->trace_mini[j];
 		}
 
-		float flag = 0;
-		float max = 0;
-		float sum = 0;
+		u32 flag = 0;
+		u32 max = 0;
+		u32 sum = 0;
 		u32 count = 0;
 		static u64 time_additional = 0;
 		u64 time_start = get_cur_time();
@@ -1583,12 +1584,12 @@ static void cull_queue(void) {
 		for (q = queue_cur; q; q = q->next) {
 
 	    q->favored = 0;
-			q->edge_score = calc_edge_score(q); //calc_neighbor(q);//
-			q->path_score = 65536.0 * q->edge_score / q->exec_us;
-			sum += q->edge_score;
+			q->neigbhor = calc_neighbor(q);//calc_edge_score(q); //
+			//q->path_score = 65536.0 * q->edge_score / q->exec_us;
+			sum += q->neigbhor;
 
-			if (q->edge_score > max)
-				max = q->edge_score;
+			if (q->neigbhor > max)
+				max = q->neigbhor;
 
 			array_entry[count++] = q;
 		}
@@ -1597,25 +1598,27 @@ static void cull_queue(void) {
 
 			flag = sum / count;
 			//flag += (max - flag) / 5;
-			g_edge_score_avg = flag;
-			g_edge_score_high = flag + (max - flag) / 2;
+			g_neighbor_avg  = flag;
+			g_neighbor_high = flag + (max - flag) / 2;
 
-			AFL_LOG("cur=%d count=%d avg=%.3f high=%.3f ", queue_cur->id, count, flag, g_edge_score_high);
+			AFL_LOG("cur=%d count=%d avg=%d high=%d ", queue_cur->id, count, flag, g_neighbor_high);
 
 			count_array = count;
-			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_path_score);
+			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_neigbhor_score);
 
 			count = 0;
-			for (i = 0; i < count_array; i++) {
+			for (i = 0; i < (count_array >> 2); i++) {
 
 				q = array_entry[i];
 				if (!q->trace_mini)
 					continue;
 
-				u32 j = MAP_SIZE >> 3;
+			  //t_bits = (MAP_SIZE << 3) - count_bits(temp_v);
+
+				j = MAP_SIZE >> 3;
 				u8 select = 0;
 
-				if (q->edge_score > g_edge_score_high && R(100) >= 95){
+				if (q->neigbhor > g_neighbor_high && R(100) >= 90){
 					select = 1;
 				} else {
 					while (j--)
@@ -1638,9 +1641,47 @@ static void cull_queue(void) {
 					++pending_favored;
 
 				if (++count <= 8)
-					AFL_LOG("%d-%.3f ", q->id, q->edge_score);
+					AFL_LOG("%d-%d ", q->id, q->neigbhor);
 
 			} // end of for (i = 0; i < count; i++)
+
+    	// Ensure coverage integrity.
+		  for (i = 0; i < MAP_SIZE; ++i) {
+		  	// untouched or coveraged by favored
+				if (!top_rated[i] || !(temp_v[i >> 3] & (1 << (i & 7))))
+					continue;
+
+		    if ( !queue_cur || top_rated[i]->id >= queue_cur->id ) {
+
+		      j = MAP_SIZE >> 3;
+		      /* Remove all bits belonging to the current entry from temp_v. */
+		      while (j--)
+		        if (top_rated[i]->trace_mini[j])
+		          temp_v[j] &= ~top_rated[i]->trace_mini[j];
+
+		      top_rated[i]->favored = 1;
+		      queued_favored++;
+
+		      if (!top_rated[i]->was_fuzzed) pending_favored++;
+
+		    } else {
+		    	// find a seed which can coverage edge i.
+					for (q = queue_cur; q; q = q->next) {
+
+						if (q->favored || !q->trace_mini || !(q->trace_mini[i >> 3] & (1 << (i & 7))))
+							continue;
+
+							j = MAP_SIZE >> 3;
+							while (j--)
+								temp_v[j] &= ~q->trace_mini[j];
+
+							q->favored = 1;
+							queued_favored++;
+							if (!q->was_fuzzed) 	pending_favored++;
+							break;
+					} // end of for (q = queue_cur; q; q = q->next)
+		    } // end of else
+		  } // end of for (i = 0; i < MAP_SIZE; ++i)
 
 			ck_free(array_entry);
 
@@ -3006,7 +3047,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
         q->exec_cksum = cksum;
         memcpy(first_trace, trace_bits, MAP_SIZE);
 #ifdef _1_PATH_HASH
-        q->path_hash = *(u32*)(trace_bits + MAP_SIZE);
+        q->path_hash = *(u32*)(trace_bits + MAP_SIZE) & (MAP_SIZE - 1);
 #endif
 
       }
@@ -3562,7 +3603,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       if ( !has_new_path() ) return 0;
 
       if ( /*count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries
-      		||*/ calc_cur_edge_score() < g_edge_score_high )
+      		||*/ calc_cur_path_neighbor() < g_neighbor_high )
       	return 0;
 
       ++g_new_paths;
@@ -3592,7 +3633,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     }
 
 #ifdef _1_PATH_HASH
-    queue_top->path_hash = *(u32*)(trace_bits + MAP_SIZE);
+    queue_top->path_hash = *(u32*)(trace_bits + MAP_SIZE) & (MAP_SIZE - 1);
 #endif
     queue_top->exec_cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
@@ -5202,12 +5243,12 @@ static u32 calculate_score(struct queue_entry* q) {
 
   /* Adjust score based on edge score. EDGE_HEAT. */
 
-  if (q->edge_score * 0.3 > g_edge_score_avg) perf_score *= 3;
-  else if (q->edge_score * 0.5 > g_edge_score_avg) perf_score *= 2;
-  else if (q->edge_score * 0.75 > g_edge_score_avg) perf_score *= 1.5;
-  else if (q->edge_score * 3 < g_edge_score_avg) perf_score *= 0.25;
-  else if (q->edge_score * 2 < g_edge_score_avg) perf_score *= 0.5;
-  else if (q->edge_score * 1.5 < g_edge_score_avg) perf_score *= 0.75;
+//  if (q->edge_score * 0.3 > g_neighbor_avg) perf_score *= 3;
+//  else if (q->edge_score * 0.5 > g_neighbor_avg) perf_score *= 2;
+//  else if (q->edge_score * 0.75 > g_neighbor_avg) perf_score *= 1.5;
+//  else if (q->edge_score * 3 < g_neighbor_avg) perf_score *= 0.25;
+//  else if (q->edge_score * 2 < g_neighbor_avg) perf_score *= 0.5;
+//  else if (q->edge_score * 1.5 < g_neighbor_avg) perf_score *= 0.75;
 
 
   /* Adjust score based on handicap. Handicap is proportional to how late
@@ -5573,7 +5614,7 @@ static u8 fuzz_one(char** argv) {
   /*********************
    * EDGE_HEAT *
    *********************/
-  update_edge_heat(queue_cur);
+  //update_edge_heat(queue_cur);
 
   /*********************
    * PERFORMANCE SCORE *
