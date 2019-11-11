@@ -3603,7 +3603,11 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       if ( !has_new_path() ) return 0;
 
       if ( /*count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries
+<<<<<<< HEAD
       		||*/ calc_cur_path_neighbor() < g_neighbor_high )
+=======
+      		||*/ calc_cur_edge_score() < g_neighbor_high )
+>>>>>>> e585bbcd38f26d68919ca70b614116ecf159c85f
       	return 0;
 
       ++g_new_paths;
