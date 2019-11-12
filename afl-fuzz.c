@@ -228,7 +228,7 @@ struct queue_entry {
 
 #ifdef _2_GUIDED_NEIGHBOR
 	u32 id;															/* File id										      */
-	float edge_score;											/* Path score							      */
+	u32 edge_score;											/* Path score							      */
 #endif
   u8* fname;                          /* File name for the test case      */
   u32 len;                            /* Input length                     */
@@ -387,7 +387,7 @@ u16 g_guide_type = 1;							// neighbor guided type. 0:only count child  1:+call
 
 u32 g_nb_count[MAP_SIZE]; 				// untouched neighbor count of edge
 
-float g_edge_score_base = 0xFFFFFFFF;	// if score of path is larger than this value, add it to queue.
+u32 g_edge_score_base = 0xFFFFFFFF;	// if score of path is larger than this value, add it to queue.
 
 static int load_edge_neighbor_file(char *fn) {
 
@@ -484,36 +484,6 @@ static u64 calc_neighbor(struct queue_entry *q) {
 
 static u64 g_num_calc_cur = 0; 	// number of times calc_cur_edge_score() has been called
 static u64 g_num_calc = 0; 	// number of times calc_edge_score() has been called
-
-static float calc_cur_edge_score() {
-
-	float score = 0.0;
-
-	++g_num_calc_cur;
-
-	for(u32 i = 0; i < MAP_SIZE; ++i)
-		if( trace_bits[i] && g_cov_count[i] ){
-			score += 1024 * ( g_nb_count[i] + 1.0 ) / g_cov_count[i];
-		}
-
-	return score / (queue_cur->exec_us);
-}
-
-static float calc_edge_score(struct queue_entry *q) {
-
-	float score = 0.0;
-
-	if(!q->trace_mini) return 0; //That is unlikely to happen
-
-	++g_num_calc;
-
-	for(u32 i = 0; i < MAP_SIZE; ++i)
-		if( (q->trace_mini[i>>3] & (1<<(i&7))) && g_cov_count[i] ){
-			score += 1024 * ( g_nb_count[i] + 1.0 ) / g_cov_count[i];
-		}
-
-	return score / (q->exec_us);
-}
 
 #endif
 
@@ -1513,14 +1483,14 @@ static void update_bitmap_score(struct queue_entry* q) {
 #ifdef _2_GUIDED_NEIGHBOR_SORT_SELECT
 // from big to small
 static int compare_edge_score(const void* p1, const void* p2) {
-	float f1 = (*(struct queue_entry**)p1)->edge_score;
-	float f2 = (*(struct queue_entry**)p2)->edge_score;
-	if (f1 < f2)
-		return 1;
-	else if (f1 > f2)
-		return -1;
-	return 0;
-  //return (*(struct queue_entry**)p2)->edge_score - (*(struct queue_entry**)p1)->edge_score;
+//	float f1 = (*(struct queue_entry**)p1)->edge_score;
+//	float f2 = (*(struct queue_entry**)p2)->edge_score;
+//	if (f1 < f2)
+//		return 1;
+//	else if (f1 > f2)
+//		return -1;
+//	return 0;
+  return (*(struct queue_entry**)p2)->edge_score - (*(struct queue_entry**)p1)->edge_score;
 }
 #endif
 
@@ -1548,31 +1518,26 @@ static void cull_queue(void) {
 
   q = queue;
 
+  while (q) {
+    q->favored = 0;
+    q = q->next;
+  }
+
 	if (queue_cur && g_edge_info_num) {
 
-		// a seed is selected before next_id or queue_cur. note: queue_cur maybe greater than next_id--------
-		for (; q != queue_cur; q = q->next) {
-
-			if (!q->favored)
-				continue;
-			// set temp_v to zero for all the edges that the q covers
-			u32 j = MAP_SIZE >> 3;
-			while (j--)
-				if (q->trace_mini[j])
-					temp_v[j] &= ~q->trace_mini[j];
-		}
-
-		float flag = 0;
-		float max = 0;
-		float sum = 0;
+		u64 flag = 0;
+		u64 max = 0;
+		u64 sum = 0;
 		u32 count = 0;
 		static u64 time_additional = 0;
 		u64 time_start = get_cur_time();
 
-		struct queue_entry **array_entry = (struct queue_entry**)ck_alloc(sizeof(struct queue_entry*) * queued_paths);
+		struct queue_entry **array_entry = (struct queue_entry**)ck_alloc( sizeof(struct queue_entry*)
+				* (queued_paths+g_new_paths_ratio) );
 		u32 count_array = 0;
 
-		for (q = queue_cur; q; q = q->next) {
+		// update all edge_score
+		for (q = queue; q; q = q->next) {
 
 	    q->favored = 0;
 			q->edge_score = calc_neighbor(q);//calc_edge_score(q);
@@ -1590,7 +1555,7 @@ static void cull_queue(void) {
 			//flag += (max - flag) / 5;
 			g_edge_score_base = flag + (max - flag) / 2;
 
-			AFL_LOG("cur=%d count=%d avg=%.3f base=%.3f ", queue_cur->id, count, flag, g_edge_score_base);
+			AFL_LOG("cur=%d count=%d avg=%d base=%d ", queue_cur->id, count, flag, g_edge_score_base);
 
 			count_array = count;
 			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_edge_score);
@@ -1605,17 +1570,14 @@ static void cull_queue(void) {
 				u32 j = MAP_SIZE >> 3;
 				u8 select = 0;
 
-//				if (q->edge_score > g_edge_score_base && R(100) >= 90){
-//					select = 1;
-//				} else {
-					while (j--)
-						if ( (temp_v[j] & ~q->trace_mini[j]) != temp_v[j] ) { // has new covarage
-							select = 1;	++j;
-							break;
-						}
-//				}
+				while (j--)
+					if ((temp_v[j] & ~q->trace_mini[j]) != temp_v[j]) { // has new covarage
+						select = 1;
+						++j;
+						break;
+					}
 
-				if (!select )
+				if (!select)
 					continue;
 
 				while (j--)
@@ -1628,7 +1590,7 @@ static void cull_queue(void) {
 					++pending_favored;
 
 				if (++count <= 8)
-					AFL_LOG("%d-%.3f ", q->id, q->edge_score);
+					AFL_LOG("%d-%d ", q->id, q->edge_score);
 
 			} // end of for (i = 0; i < count; i++)
 
@@ -1640,11 +1602,6 @@ static void cull_queue(void) {
 		}
 
 	} else { // if (queue_cur && g_edge_info_num)
-
-		while (q) {
-			q->favored = 0;
-			q = q->next;
-		}
 
 		/* Let's see if anything in the bitmap isn't captured in temp_v.
 			 If yes, and if it has a top_rated[] contender, let's use it. */
@@ -1674,39 +1631,6 @@ static void cull_queue(void) {
     mark_as_redundant(q, !q->favored);
     q = q->next;
   }
-
-#ifdef AFL_PLUS_1_FIX_MISS_EDGE_BUG
-  u8 bug = 1;
-  for (i = 0; i < MAP_SIZE; ++i) {
-
-		if (!top_rated[i] || !(temp_v[i >> 3] & (1 << (i & 7))))
-			continue;
-
-		bug = 1;
-		q = queue_cur;
-		while (q) {
-			if (!q->favored && q->trace_mini && (q->trace_mini[i >> 3] & (1 << (i & 7)))) {
-
-				u32 j = MAP_SIZE >> 3;
-				while (j--)
-					temp_v[j] &= ~q->trace_mini[j];
-
-				q->favored = 1;
-				queued_favored++;
-				if (!q->was_fuzzed)
-					pending_favored++;
-				bug = 0;
-				break;
-			}
-			q = q->next;
-		} // end of while (q)
-
-		if(bug)
-			AFL_LOG("!!!bug!!! edge %d isn't coverage! %s queue_cur=%d\n", i, out_dir, queue_cur->id)
-		else
-			AFL_LOG("!!!fixed!!! edge %d is fixed! %s queue_cur=%d\n", i, out_dir, queue_cur->id)
-	} // end of for (i = 0; i < MAP_SIZE; ++i)
-#endif
 
 }
 
@@ -3534,24 +3458,14 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       		|| g_consecutive_pat >= 2		// 2 consecutive pat files
 					|| queued_paths < 500
       		|| g_new_paths >= queued_paths * g_new_paths_ratio / (100+g_new_paths_ratio)
-					// || get_cur_ms() - last_path_time < 3000  // need last org afl path time
-      		// || R(100) < 67
 					)
       	return 0;
-
-      // check hash when time interval > 3s and don't find new paths
-//      static u32 last_paths_num = 0;
-//
-//      if (last_paths_num != g_new_paths + queued_paths){ // found new path with cov
-//      	last_paths_num = g_new_paths + queued_paths;
-//      	return 0;
-//      }
 
 
       if ( !has_new_path() ) return 0;
 
       if ( /*count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries
-      		||*/ calc_cur_edge_score() < g_edge_score_base )
+      		||*/ calc_cur_path_neighbor() < g_edge_score_base )
       	return 0;
 
       ++g_new_paths;
