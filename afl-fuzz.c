@@ -253,7 +253,7 @@ struct queue_entry {
   u32 tc_ref;                         /* Trace bytes ref count            */
 
 #ifdef _1_PATH_HASH
-  u16 path_hash;
+  u32 path_hash;
   struct queue_entry *next_hash;			/* Next element with same path hash */
 #endif
 
@@ -295,7 +295,6 @@ static u32 g_new_paths_ratio = 0;			// percentage of new paths, default 0%
 static u32 g_new_paths;
 static u8  g_consecutive_pat = 0;					// Number of consecutive pat files?
 static struct queue_entry* g_path_hash[MAP_SIZE] = {0};
-static u32 g_cov_count[MAP_SIZE]; 		// EDGE_HEAT. Log count of testcases which coverage edge i.	*/
 #endif
 
 /* Fuzzing stages */
@@ -457,7 +456,7 @@ static void update_neighbor_count(){
 		g_nb_count[i] = calc_edge_neighbor(i);
 }
 
-static u64 calc_cur_path_neighbor() {
+static u64 calc_cur_edge_score() {
 
 	u64 num = 0;
 
@@ -468,7 +467,7 @@ static u64 calc_cur_path_neighbor() {
 	return num;
 }
 
-static u64 calc_neighbor(struct queue_entry *q) {
+static u64 calc_edge_score(struct queue_entry *q) {
 
 	//u16 hash;	//edge hash
 	u64 num = 0;
@@ -481,9 +480,6 @@ static u64 calc_neighbor(struct queue_entry *q) {
 
 	return num;
 }
-
-static u64 g_num_calc_cur = 0; 	// number of times calc_cur_edge_score() has been called
-static u64 g_num_calc = 0; 	// number of times calc_edge_score() has been called
 
 #endif
 
@@ -1119,7 +1115,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
 #ifdef _1_PATH_HASH
 static inline u8 has_new_path(/*u32 cksum*/) {
 
-	u16 path_hash = *(u16*)(trace_bits + MAP_SIZE);
+	u32 path_hash = *(u32*)(trace_bits + MAP_SIZE) & (MAP_SIZE - 1);
 
 	if (!g_path_hash[path_hash])
 		return 1;
@@ -1505,7 +1501,7 @@ static void cull_queue(void) {
 
   struct queue_entry* q;
   static u8 temp_v[MAP_SIZE >> 3];
-  u32 i;
+  u32 i, j;
 
   if (dumb_mode || !score_changed) return;
 
@@ -1539,8 +1535,7 @@ static void cull_queue(void) {
 		// update all edge_score
 		for (q = queue; q; q = q->next) {
 
-	    q->favored = 0;
-			q->edge_score = calc_neighbor(q);//calc_edge_score(q);
+			q->edge_score = calc_edge_score(q);
 			sum += q->edge_score;
 
 			if (q->edge_score > max)
@@ -1561,13 +1556,13 @@ static void cull_queue(void) {
 			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_edge_score);
 
 			count = 0;
-			for (i = 0; i < count_array; i++) {
+			for (i = 0; i < count_array; ++i) {
 
 				q = array_entry[i];
 				if (!q->trace_mini)
 					continue;
 
-				u32 j = MAP_SIZE >> 3;
+				j = MAP_SIZE >> 3;
 				u8 select = 0;
 
 				while (j--)
@@ -1597,7 +1592,6 @@ static void cull_queue(void) {
 			ck_free(array_entry);
 
 			time_additional += get_cur_time() - time_start;
-			AFL_LOG("calc_cur=%lld calc=%lld ", g_num_calc_cur, g_num_calc);
 			AFL_LOG("fav=%d time=%llus\n", count, time_additional / 1000);
 		}
 
@@ -2920,7 +2914,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
         q->exec_cksum = cksum;
         memcpy(first_trace, trace_bits, MAP_SIZE);
 #ifdef _1_PATH_HASH
-        q->path_hash = *(u16*)(trace_bits + MAP_SIZE);
+        q->path_hash = *(u32*)(trace_bits + MAP_SIZE) & (MAP_SIZE - 1);
 #endif
 
       }
@@ -2951,6 +2945,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   total_bitmap_entries++;
 
   update_bitmap_score(q);
+
 
   /* If this case didn't result in new output from the instrumentation, tell
      parent. This is a non-critical problem, but something to warn the user
@@ -3465,7 +3460,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       if ( !has_new_path() ) return 0;
 
       if ( /*count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries
-      		||*/ calc_cur_path_neighbor() < g_edge_score_base )
+      		||*/ calc_cur_edge_score() < g_edge_score_base )
       	return 0;
 
       ++g_new_paths;
@@ -3495,7 +3490,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     }
 
 #ifdef _1_PATH_HASH
-    queue_top->path_hash = *(u16*)(trace_bits + MAP_SIZE);
+    queue_top->path_hash = *(u32*)(trace_bits + MAP_SIZE) & (MAP_SIZE - 1);
 #endif
     queue_top->exec_cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
@@ -5102,6 +5097,17 @@ static u32 calculate_score(struct queue_entry* q) {
   else if (q->bitmap_size * 2 < avg_bitmap_size) perf_score *= 0.5;
   else if (q->bitmap_size * 1.5 < avg_bitmap_size) perf_score *= 0.75;
 
+
+  /* Adjust score based on edge score. EDGE_HEAT. */
+
+//  if (q->edge_score * 0.3 > g_neighbor_avg) perf_score *= 3;
+//  else if (q->edge_score * 0.5 > g_neighbor_avg) perf_score *= 2;
+//  else if (q->edge_score * 0.75 > g_neighbor_avg) perf_score *= 1.5;
+//  else if (q->edge_score * 3 < g_neighbor_avg) perf_score *= 0.25;
+//  else if (q->edge_score * 2 < g_neighbor_avg) perf_score *= 0.5;
+//  else if (q->edge_score * 1.5 < g_neighbor_avg) perf_score *= 0.75;
+
+
   /* Adjust score based on handicap. Handicap is proportional to how late
      in the game we learned about this path. Latecomers are allowed to run
      for a bit longer until they catch up with the rest. */
@@ -5131,6 +5137,7 @@ static u32 calculate_score(struct queue_entry* q) {
     default:        perf_score *= 5;
 
   }
+
 
   /* Make sure that we don't go over limit. */
 
@@ -5460,15 +5467,6 @@ static u8 fuzz_one(char** argv) {
   }
 
   memcpy(out_buf, in_buf, len);
-
-
-  /*********************
-   * EDGE_HEAT *
-   *********************/
-  for (u32 i = 0; i < MAP_SIZE; ++i) {
-  	g_cov_count[i] += trace_bits[i] ? 1 : 0;
-  }
-
 
   /*********************
    * PERFORMANCE SCORE *
