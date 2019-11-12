@@ -38,7 +38,7 @@ g_size_ins_block = 0x38
 # offset of random in mov ins
 g_off_random = 3
 # MAPSIZE bits of afl-fuzz
-g_map_size = 16
+g_map_size = 17
 # offset of x from head
 g_off_x = 7
 # offset of z from head
@@ -64,7 +64,7 @@ def IsInstrumentIns(ea):
 .text:0000000000412471 5B                pop     rbx
 .text:0000000000412472 48 8D A4 24 80 00+lea     rsp, [rsp+80h] 
         '''
-        if 0x6851538024648D48 == idc.Qword(ea) and 0x0000008024A48D48 == idc.Qword(ea+0x22):
+        if 0x6851538024648D48 == idc.Qword(ea) and 0xC748 == idc.Word(ea+0xc) and 0xC748 == idc.Word(ea+0x13) and 0x0000008024A48D48 == idc.Qword(ea+0x22):
             return True
     else: # 32bit
         '''
@@ -174,6 +174,36 @@ def IsSanFunc(fun):
     return False
 
 
+def LookForInsChildBbls(head, edges, stack):
+    """
+    looks for instrumented child bbls.
+    @edges = {}   # dict struct.  head -> of (head, ..., head)
+    @stack      stack of search address, avoid recusion loops
+    ## return   bbl sequence of all child edges.
+    """
+    # seqs = {}   # head -> [bbl1, bbl2, ...]
+    bbls_child = set()
+
+    # avoid recusion loops
+    if head in stack:
+        return bbls_child
+    stack.append(head)
+    
+    if head not in edges:
+        return bbls_child
+
+    for b in edges[head]:
+        if IsInstrumentIns(b):
+            bbls_child.add(b)
+        else:
+            if b == head:   # stuck in dead recursion
+                continue
+            bbls_child_t = LookForInsChildBbls(b, edges, stack)
+            bbls_child.update(bbls_child_t)
+
+    return bbls_child
+
+
 def GetFunEdgesAndBbls(function_ea):
     """
     Get bbls of function.
@@ -185,10 +215,15 @@ def GetFunEdgesAndBbls(function_ea):
     MultiBBS = {}   # head -> [pred_bbls]
     bbls = {}   # head -> bbl
     bbls2 = {}  # tail -> bbl
-    edges = set()   # set of (tail, head)
+    edges_s = set() # set of (tail, head)
+    edges_d = {}    # dict struct.  head -> of (head, ..., head)
+    edges_count = 0
+    edges_s_t = set()   # tmp edges set
+    edges_d_t = {}      # tmp edges dict.
+
 
     if not IsInstrumentIns(function_ea):
-        return bbls, bbls2, edges, SingleBBS, MultiBBS
+        return bbls, edges_d, edges_count, SingleBBS, MultiBBS
 
     f_start = function_ea
     f_end = idc.FindFuncEnd(function_ea)
@@ -199,42 +234,43 @@ def GetFunEdgesAndBbls(function_ea):
         # If the element is an instruction
         if head == idaapi.BADADDR:
             raise Exception("Invalid head for parsing")
-        if idc.isCode(idc.GetFlags(head)):
+        if not idc.isCode(idc.GetFlags(head)):
+            continue
 
-            # Get the references made from the current instruction
-            # and keep only the ones local to the function.
-            refs = idautils.CodeRefsFrom(head, 0)
-            refs_filtered = set()
-            for ref in refs:
-                if ref > f_start and ref < f_end:   # can't use ref>=f_start, avoid recusion
-                    refs_filtered.add(ref)
-            refs = refs_filtered
+        # Get the references made from the current instruction
+        # and keep only the ones local to the function.
+        refs = idautils.CodeRefsFrom(head, 0)
+        refs_filtered = set()
+        for ref in refs:
+            if ref > f_start and ref < f_end:   # can't use ref>=f_start, avoid recusion
+                refs_filtered.add(ref)
+        refs = refs_filtered
 
-            if refs:
-                # If the flow continues also to the next (address-wise)
-                # instruction, we add a reference to it.
-                # For instance, a conditional jump will not branch
-                # if the condition is not met, so we save that
-                # reference as well.
-                next_head = idc.NextHead(head, f_end)
-                if next_head != idaapi.BADADDR and idc.isFlow(idc.GetFlags(next_head)):
-                    refs.add(next_head)
+        if refs:
+            # If the flow continues also to the next (address-wise)
+            # instruction, we add a reference to it.
+            # For instance, a conditional jump will not branch
+            # if the condition is not met, so we save that
+            # reference as well.
+            next_head = idc.NextHead(head, f_end)
+            if next_head != idaapi.BADADDR and idc.isFlow(idc.GetFlags(next_head)):
+                refs.add(next_head)
                 
-                # Update the boundaries found so far.
-                boundaries.update(refs)
-                for r in refs:  # enum all of next ins
-                    # If the flow could also come from the address
-                    # previous to the destination of the branching
-                    # an edge is created.
-                    if isFlow(idc.GetFlags(r)):
-                        prev_head = idc.PrevHead(r, f_start)
-                        if prev_head == 0xffffffffL:
-                            #edges.add((head, r))
-                            #raise Exception("invalid reference to previous instruction for", hex(r))
-                            pass
-                        else:
-                            edges.add((prev_head, r))
-                    edges.add((head, r))
+            # Update the boundaries found so far.
+            boundaries.update(refs)
+            for r in refs:  # enum all of next ins
+                # If the flow could also come from the address
+                # previous to the destination of the branching
+                # an edge is created.
+                if isFlow(idc.GetFlags(r)):
+                    prev_head = idc.PrevHead(r, f_start)
+                    if prev_head == 0xffffffffL:
+                        #edges_s_t.add((head, r))
+                        #raise Exception("invalid reference to previous instruction for", hex(r))
+                        pass
+                    else:
+                        edges_s_t.add((prev_head, r))
+                edges_s_t.add((head, r))
 
     #end of for head in idautils.Heads(chunk[0], chunk[1]):
         
@@ -248,7 +284,7 @@ def GetFunEdgesAndBbls(function_ea):
             if len(bbl) > 0:
                 if bbl[0] == head:
                     continue
-                if IsInstrumentIns(bbl[0]):
+                if True:    # IsInstrumentIns(bbl[0]):
                     bbl[1] = last_head
                     bbls[bbl[0]] = bbl
                     bbls2[bbl[1]] = bbl
@@ -257,7 +293,7 @@ def GetFunEdgesAndBbls(function_ea):
         elif mnem.startswith('j'):
             if len(bbl) > 0 and bbl[0] == head + idc.ItemSize(head):
                 continue
-            if IsInstrumentIns(bbl[0]):
+            if True:    # IsInstrumentIns(bbl[0]):
                 bbl[1] = head # head + idc.ItemSize(head))
                 bbls[bbl[0]] = bbl
                 bbls2[bbl[1]] = bbl
@@ -273,35 +309,82 @@ def GetFunEdgesAndBbls(function_ea):
         #    bbl[3] += 1
 
     # add last basic block
-    if len(bbl) and bbl[0] != f_end and IsInstrumentIns(bbl[0]):
+    if len(bbl) and bbl[0] != f_end: # and IsInstrumentIns(bbl[0]):
         bbl[1] = f_end
         bbls[bbl[0]] = bbl
         bbls2[bbl[1]] = bbl
+ 
+    # edges set -> dict
+    for e in edges_s_t:
+        if e[0] in bbls2:
+            bbl_head = bbls2[e[0]][0]
+            if bbl_head in edges_d_t:
+                edges_d_t[bbl_head].append(e[1])
+            else:
+                edges_d_t[bbl_head] = [e[1]]
+        else:
+            print('edge (%x, %x) can not find head bbl.' % (e[0], e[1])) # a small case. e1 flow e0.
 
+    # revise edges. head bbl and tail bbl of edges must be instrumented.
+    for e0 in edges_d_t:
+        if not IsInstrumentIns(e0): # e0 don't instrumented, skip.
+            continue
 
+        for e1 in edges_d_t[e0]:
+            if IsInstrumentIns(e1):      # e0 e1 both instrumented, add edge.
+                if e0 in edges_d:
+                    edges_d[e0].append(e1)
+                else:
+                    edges_d[e0] = [e1]
+                edges_count += 1
+            else:
+                # e1 don't instrumented, recursively looks for instrumented child bbls
+                bbls_t = LookForInsChildBbls(e1, edges_d_t, [])
+                for b in bbls_t: # add edge                
+                    if e0 in edges_d:
+                        edges_d[e0].append(b)
+                    else:
+                        edges_d[e0] = [b]
+                    edges_count += 1
+
+    # revise bbls. bbl must be instrumented.
+    for b in bbls.keys():
+        if not IsInstrumentIns(b):
+            # if bbls[b][1] in bbls2:     # avoid multi del
+                # bbls2.pop(bbls[b][1])   
+            bbls.pop(b)
+
+    
     #print('bbls:')
     #i = 0
     #for b in bbls:
     #    i += 1
     #    print('%04d %x, %x' % (i, b, bbls[b][1]))
 
-    #print('edges:')
+    #print('edges_d:')
     #i = 0
-    #for e in edges:
-    #    i += 1
-    #    print('%04d %x, %x' % (i, e[0], e[1]))
+    #for e0 in edges_d:
+    #    for e1 in edges_d[e0]:
+    #        i += 1
+    #        print('%04d %x, %x' % (i, e0, e1))
 
-    for e in edges:
-        #print('%x, %x' % (e[0], e[1]))
-        if e[1] in MultiBBS:
-            MultiBBS[e[1]].append(bbls2[e[0]])   # add Pred
-        elif e[1] in SingleBBS:
-            MultiBBS[e[1]] =  [SingleBBS[e[1]], bbls2[e[0]]]   # add Pred
-            SingleBBS.pop(e[1])                                # remove from SingleBBS
-        else:
-            SingleBBS[e[1]] = bbls2[e[0]]       # add Pred
+
+    for e0 in edges_d:
+        if e0 not in bbls:
+            print('error:%x have no head' % (e0))   # error
+            continue
+        for e1 in edges_d[e0]:
+            if e1 in MultiBBS:
+                MultiBBS[e1].append(bbls[e0])   # add Pred
+            elif e1 in SingleBBS:
+                MultiBBS[e1] =  [SingleBBS[e1], bbls[e0]]   # add Pred
+                SingleBBS.pop(e1)                           # remove from SingleBBS
+            else:
+                SingleBBS[e1] = bbls[e0]       # add Pred
             
-    return bbls, bbls2, edges, SingleBBS, MultiBBS
+    # del bbls which don't instrumented
+
+    return bbls, edges_d, edges_count, SingleBBS, MultiBBS
 
 
 def HandleFunc(func):
@@ -371,7 +454,7 @@ def tow_search(l, n):
     return -1
 
 
-def AssignUniqRandomKeysToBBs(bbls, max):
+def AssignUniqRandomKeysToBBs(bbls, MultiBBS, max):
     '''
     AssignUniqRandomKeysToBBs
     @bbls
@@ -380,29 +463,39 @@ def AssignUniqRandomKeysToBBs(bbls, max):
     rids = set()
     coll_addrs = set()
     count_rid_coll = 0
+    rid_cur = max
+
+    # patch MultiBBS with big rid
+    for bbl in MultiBBS:
+        idc.PatchDword(GetBBLRidAddr(bbl), rid_cur)
+        rids.add(rid_cur)
+        rid_cur -= 1
+    print('patch MultiBBS with rid > %d' % rid_cur)
+
     for head in bbls:
+        if head in MultiBBS:  # don't patch MultiBBS
+            continue
         rid = GetBBLRid(head)
         if rid in rids:
             count_rid_coll += 1
             coll_addrs.add(head)
         else:
             rids.add(rid)
-    print('%d/%d rid coll' % (count_rid_coll, len(bbls)))
+    print('%d/%d coll' % (count_rid_coll, len(bbls)))
 
-    rid = max
     for addr in coll_addrs:
-        while rid >= 0: 
-            if rid not in rids:
-                rids.add(rid)
-                idc.PatchDword(GetBBLRidAddr(addr), rid)
-                rid -= 1
+        while rid_cur >= 0: 
+            if rid_cur not in rids:
+                rids.add(rid_cur)
+                idc.PatchDword(GetBBLRidAddr(addr), rid_cur)
+                rid_cur -= 1
                 break
-            rid -= 1
+            rid_cur -= 1
 
-        if rid < 0:
+        if rid_cur < 0:
             print('%d rid coll after fixed', len(bbls) - max -1)
             break
-    if rid >= 0:
+    if rid_cur >= 0:
         print('fixed rid coll success!')
 
 
@@ -410,22 +503,25 @@ def GetCFG():
     SingleBBS = {}  # head -> pred_bbl
     MultiBBS = {}   # head -> [pred_bbls]
     bbls = {}   # head -> bbl
-    bbls2 = {}  # tail -> bbl
-    edges = set()   # set of (tail, head) or (head, head)
+    # bbls2 = {}  # tail -> bbl
+    edges = {}  # dict struct.  head -> of (head, ..., head)   #set()   # set of (tail, head) or (head, head)
+    edges_count = 0
 
-    #bbls_t, bbls2_t, edges_t, SingleBBS_t, MultiBBS_t = GetFunEdgesAndBbls(0x4AEC90)  # deubg
+    #bbls_t, edges_t, count, SingleBBS_t, MultiBBS_t = GetFunEdgesAndBbls(0x08F7790)  # deubg
+    #exit()
 
     for func in idautils.Functions():
         if IsSanFunc(func):
             continue
         print('%x %s') % (func, idc.GetFunctionName(func))
-        bbls_t, bbls2_t, edges_t, SingleBBS_t, MultiBBS_t = GetFunEdgesAndBbls(func)
+        bbls_t, edges_t, count, SingleBBS_t, MultiBBS_t = GetFunEdgesAndBbls(func)
         bbls.update(bbls_t)
-        bbls2.update(bbls2_t)
+        # bbls2.update(bbls2_t)
         edges.update(edges_t) # union
+        edges_count += count
         SingleBBS.update(SingleBBS_t)
         MultiBBS.update(MultiBBS_t)
-    return  bbls, bbls2, edges, SingleBBS, MultiBBS
+    return  bbls, edges, edges_count, SingleBBS, MultiBBS
 
 
 def CalcFmul(MultiBBS, max_value):
@@ -437,6 +533,11 @@ def CalcFmul(MultiBBS, max_value):
     Hashes = set()
     bOk = False
 
+    count_solv_best = 0
+    count_unsolv_best = 0
+    y_best = 0
+    Params_best = {}
+
     Params_Fun = {} # functions which no direct caller
     for head in MultiBBS:
         if  0 == len(MultiBBS[head]):
@@ -444,7 +545,7 @@ def CalcFmul(MultiBBS, max_value):
             Params_Fun[head] = (0, random.randint(0, g_map_size))
 
 
-    for y in range(0, g_map_size // 2):
+    for y in range(0, 2):
         Hashes = set()
         Params={}
         Solv = set()
@@ -456,12 +557,12 @@ def CalcFmul(MultiBBS, max_value):
 
             cur = GetBBLRid(head)
             bFindXZ = False
-            for x in range(0, g_map_size):
-                for z in range(0, g_map_size * 32):
+            for x in range(1, g_map_size+1):
+                for z in range(0, g_map_size * 2):
                     tmpHashSet = set()
                     for pred_bbl in MultiBBS[head]:
                         pred = GetBBLRid(pred_bbl[0])
-                        edgeHash = ((cur >> x) ^ (pred >> y) + z) & max_value
+                        edgeHash = ((cur >> x) + (pred >> y) + z) & max_value
                         if edgeHash in tmpHashSet:
                             break
                         tmpHashSet.add(edgeHash)
@@ -477,20 +578,33 @@ def CalcFmul(MultiBBS, max_value):
                 if bFindXZ:
                     break
             
-            if not bFindXZ:
-                print('%x' % head)
-                Unsolv.add(head)
-                if len(Unsolv) >= 10 and float(len(Unsolv))/len(MultiBBS) >= 0.01:   # this y is failed
-                    break
+            if not bFindXZ: 
+                if  head in idautils.Functions(): # if head is function, skip collison. set x z random
+                    print('%x function coll' % head)
+                    Params[head] = (0, random.randint(0, g_map_size * 8))
+                else:
+                    print('%x' % head)
+                    Unsolv.add(head)
+                    #if len(Unsolv) >= 10 and float(len(Unsolv))/len(MultiBBS) >= 0.02:   # this y is failed, next
+                        #break
             
         print('Solv=%d Unsolv=%d y=%d' % (len(Solv), len(Unsolv), y))
-        if len(Unsolv) < 10 or float(len(Unsolv))/len(MultiBBS) < 0.01:              # success
+        if len(Unsolv) < 10 or float(len(Unsolv))/len(MultiBBS) < 0.02:              # success
             bOk = True
             break
+        elif len(Solv) > count_solv_best:
+            count_solv_best = len(Solv)
+            count_unsolv_best = len(Unsolv)
+            y_best = y
+            Params_best = Params
 
     if bOk:
         Params.update(Params_Fun)
         return     y, Hashes, Params
+    else:
+        Params_best.update(Params_Fun)
+        print('Result: Solv=%d Unsolv=%d y=%d' % (count_solv_best, count_unsolv_best, y_best))
+        return     y_best, Hashes, Params_best
     return 0, set(), {}
 
 
@@ -527,6 +641,7 @@ def SaveMultiBBSEdgeInfo(MultiBBS, bbls, max, f):
         x, z = GetXZ(k)
         for bbl in MultiBBS[k]: #[head, tail, call_num, mem_num]
             pre = GetBBLRid(bbl[0])
+            # print(k, bbl[0], x, y, z, max)
             hash = ((cur >> x) ^ (pre >> y) + z) & max
             f.write(("%d %d 0 0 %d %d %d\n") % ( bbl[0], k, hash, bbls[k][2], bbls[k][3]))
 
@@ -535,7 +650,7 @@ def main():
     
     idaapi.msg("Loading CollAFL_Node_Extract\n")
     idb_path = idc.GetIdbPath()
-    save_path = idb_path.split('.')[0] + '_node_relation.txt'
+    save_path = idb_path[:-4] + '_node_relation.txt'
     f = open(save_path, 'w')
     print(save_path)
     time_start = time.time()
@@ -546,8 +661,8 @@ def main():
     SingleBBS = {}  # head -> pred_bbl
     MultiBBS = {}   # head -> [pred_bbls]
     bbls = {}   # head -> bbl
-    bbls2 = {}  # tail -> bbl
-    edges = set()   # set of (tail, head) or (head, head)
+    # bbls2 = {}  # tail -> bbl
+    edges = {}  # dict struct.  head -> of (head, ..., head)    #set()   # set of (tail, head) or (head, head). only call function is (head, head)
     bbl_heads = []    # head of bbl
 
     max_value = int(math.pow(2, g_map_size))-1
@@ -557,7 +672,7 @@ def main():
     #return    
 
     #1: (BBS, SingleBBS, MultiBBS, Preds) = GetCFG()
-    bbls, bbls2, edges, SingleBBS, MultiBBS = GetCFG()
+    bbls, edges, edges_count, SingleBBS, MultiBBS = GetCFG()
     bbl_heads = list(bbls.keys())
     bbl_heads.sort()
     print(str(time.time() - time_start) + 's ' + 'GetCFG')  
@@ -572,11 +687,16 @@ def main():
         for r in refs:
             head = tow_search(bbl_heads, r)
             if head > 0 and r >= bbls[head][0] and r <= bbls[head][1]:
-                edges.add((head, func))   # (head, head)
+                #edges.add((head, func))   # (head, head)                
+                if head in edges:
+                    edges[head].append(func)
+                else:
+                    edges[head] = [func]
+                edges_count += 1
                 MultiBBS[func].append(bbls[head])   # add Pred
     
 
-    print('bbls=%d edges=%d SingleBBS=%d MultiBBS=%d' % (len(bbls), len(edges), len(SingleBBS), len(MultiBBS)))
+    print('bbls=%d edges=%d SingleBBS=%d MultiBBS=%d' % (len(bbls), edges_count, len(SingleBBS), len(MultiBBS)))
     #for head in bbls:
     #    if head not in SingleBBS and head not in MultiBBS:
     #        print('%x' % head)
@@ -585,7 +705,7 @@ def main():
 
     #2: Keys = AssignUniqRandomKeysToBBs(BBS)
     print('AssignUniqRandomKeysToBBs')  
-    AssignUniqRandomKeysToBBs(bbls, max_value)
+    AssignUniqRandomKeysToBBs(bbls, MultiBBS, max_value)
 
     #3-4 Fixate algorithms. Preds and Keys are common arguments
     #3: (Hashes, Params, Solv, Unsolv) = CalcFmul(MultiBBS)
