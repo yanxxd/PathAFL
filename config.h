@@ -21,13 +21,11 @@
 
 #define _1_PATH_HASH
 #define _2_GUIDED_NEIGHBOR
-//#define _2_GUIDED_NEIGHBOR_ONLY_CALC_NEXT500
 #define _2_GUIDED_NEIGHBOR_SORT_SELECT
-//#define AFL_PLUS_1_FIX_MISS_EDGE_BUG
 #define _3_COLLAFL
 
 /* Version string: */
-#define VERSION             "2.52b-Col-Path-v10.0"
+#define VERSION             "2.52b-PathAFL-v11"
 
 /******************************************************
  *                                                    *
