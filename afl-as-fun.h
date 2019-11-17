@@ -221,7 +221,7 @@ static const u8* main_payload_32_fun =
   "\n"
 #ifdef _1_PATH_HASH
   "  /* rorl $8, %edi\n */"
-  "  xorl %ecx, 131072(%edx)\n"
+  "  addl %ecx, 65536(%edx)\n"
 #endif
 #ifndef COVERAGE_ONLY
 #ifdef _1_PATH_HASH
@@ -459,7 +459,7 @@ static const u8* main_payload_64_fun =
 
 #ifdef _3_COLLAFL
 #ifdef _1_PATH_HASH
-  "  xorq  %rbx, 131072(%rdx)\n"
+  "  addq  %rbx, 65536(%rdx)\n"
 #endif
 	"  cmpq  $0xFF, %rcx\n"									// x = rcx
 	"  jne   __collafl_fmul_fun\n"							// x != 0xFF		unlikely
@@ -474,7 +474,7 @@ static const u8* main_payload_64_fun =
 	"  incb (%rdx, %rdi, 1)\n"
 #else
 #ifdef _1_PATH_HASH
-  "  xorq %rcx, 131072(%rdx)\n"
+  "  addq %rcx, 65536(%rdx)\n"
 #endif
 #ifndef COVERAGE_ONLY
   "  xorq __afl_prev_loc(%rip), %rcx\n"
@@ -515,7 +515,7 @@ static const u8* main_payload_64_fun =
 	"  shrq  %cl, %rbx\n"										// cur >> y  -> rbx
 	"  movq  %rbx, __afl_prev_loc(%rip)\n"	// cur >> y  -> prev
 	"  addq  32(%rsp), %rdi\n" 							// (cur >> x) ^ (prev >> y) + z  -> rbx
-  "  andq  $0x1FFFF, %rdi\n"
+  "  andq  $0xFFFF, %rdi\n"
 	"  jmp   __collafl_add_cov_fun\n"
 #endif
   "\n"

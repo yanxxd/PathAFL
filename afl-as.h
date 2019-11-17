@@ -594,7 +594,7 @@ static const u8* main_payload_64 =
 	"  shrq  %cl, %rbx\n"										// cur >> y  -> rbx
 	"  movq  %rbx, __afl_prev_loc(%rip)\n"	// cur >> y  -> prev
 	"  addq  32(%rsp), %rdi\n" 							// (cur >> x) ^ (prev >> y) + z  -> rbx
-	"  andq  $0x1FFFF, %rdi\n"
+	"  andq  $0xFFFF, %rdi\n"
 	"  jmp   __collafl_add_cov\n"
 
 	// x == 0xFF && z == 0xFF  __collafl_fhash

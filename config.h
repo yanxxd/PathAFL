@@ -25,7 +25,7 @@
 #define _3_COLLAFL
 
 /* Version string: */
-#define VERSION             "2.52b-PathAFL-v11"
+#define VERSION             "2.52b-PathAFL-v12"
 
 /******************************************************
  *                                                    *

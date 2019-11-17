@@ -118,12 +118,13 @@ EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
            shuffle_queue,             /* Shuffle input queue?             */
            bitmap_changed = 1,        /* Time to update bitmap?           */
            qemu_mode,                 /* Running in QEMU mode?            */
-					 verbose_mode,              /* Running in verbose mode?         */
            skip_requested,            /* Skip request, via SIGUSR1        */
            run_over10m,               /* Run time over 10 minutes?        */
            persistent_mode,           /* Running in persistent mode?      */
            deferred_mode,             /* Deferred forkserver mode?        */
-           fast_cal;                  /* Try to calibrate faster?         */
+           fast_cal,                  /* Try to calibrate faster?         */
+           verbose_mode,              /* Running in verbose mode?         */
+					 g_power_schedule;					/* Power Schedule	like AFLFast			*/
 
 static s32 out_fd,                    /* Persistent fd for out_file       */
            dev_urandom_fd = -1,       /* Persistent fd for /dev/urandom   */
@@ -297,7 +298,7 @@ static u32 g_new_paths_ratio = 0;			// percentage of new paths, default 0%
 static u32 g_new_paths;
 static u8  g_consecutive_pat = 0;					// Number of consecutive pat files?
 static struct queue_entry* g_path_hash[MAP_SIZE] = {0};
-static u32 g_cov_count[MAP_SIZE]; 		// EDGE_HEAT. Log count of testcases which coverage edge i.	*/
+//static u32 g_cov_count[MAP_SIZE]; 		// EDGE_HEAT. Log count of testcases which coverage edge i.	*/
 #endif
 
 /* Fuzzing stages */
@@ -367,7 +368,7 @@ int afl_log_real(const char *fmt, ...)
 		return 0;
 	}
 	fwrite(buf, 1, len, f);
-	fflush(f);
+	//fflush(f);
 
 	return len;
 }
@@ -453,11 +454,11 @@ static inline u32 calc_edge_neighbor(u32 hash) {
 	return score;
 }
 
-static void update_edge_heat(struct queue_entry *q){
-  for (u32 i = 0; i < MAP_SIZE; ++i) {
-  	g_cov_count[i] += q->trace_mini[i>>3] & (1<<(i&7)); //trace_bits[i] ? 1 : 0;
-  }
-}
+//static void update_edge_heat(struct queue_entry *q){
+//  for (u32 i = 0; i < MAP_SIZE; ++i) {
+//  	g_cov_count[i] += q->trace_mini[i>>3] & (1<<(i&7)); //trace_bits[i] ? 1 : 0;
+//  }
+//}
 
 // call this function after fuzz one seed.
 static void update_neighbor_count(){
@@ -491,38 +492,38 @@ static u64 calc_neighbor(struct queue_entry *q) {
 	return num;
 }
 
-static u64 g_num_calc_cur = 0; 	// number of times calc_cur_edge_score() has been called
-static u64 g_num_calc = 0; 	// number of times calc_edge_score() has been called
-
-static float calc_cur_edge_score() {
-
-	float score = 0.0;
-
-	++g_num_calc_cur;
-
-	for(u32 i = 0; i < MAP_SIZE; ++i)
-		if( trace_bits[i] && g_cov_count[i] ){
-			score += 65536.0 * ( g_nb_count[i] + 1.0 ) / g_cov_count[i];
-		}
-
-	return score;
-}
-
-static float calc_edge_score(struct queue_entry *q) {
-
-	float score = 0.0;
-
-	if(!q->trace_mini) return 0; //That is unlikely to happen
-
-	++g_num_calc;
-
-	for(u32 i = 0; i < MAP_SIZE; ++i)
-		if( (q->trace_mini[i>>3] & (1<<(i&7))) && g_cov_count[i] ){
-			score += 65536.0 * ( g_nb_count[i] + 1.0 ) / g_cov_count[i];
-		}
-
-	return score;
-}
+//static u64 g_num_calc_cur = 0; 	// number of times calc_cur_edge_score() has been called
+//static u64 g_num_calc = 0; 	// number of times calc_edge_score() has been called
+//
+//static float calc_cur_edge_score() {
+//
+//	float score = 0.0;
+//
+//	++g_num_calc_cur;
+//
+//	for(u32 i = 0; i < MAP_SIZE; ++i)
+//		if( trace_bits[i] && g_cov_count[i] ){
+//			score += 65536.0 * ( g_nb_count[i] + 1.0 ) / g_cov_count[i];
+//		}
+//
+//	return score;
+//}
+//
+//static float calc_edge_score(struct queue_entry *q) {
+//
+//	float score = 0.0;
+//
+//	if(!q->trace_mini) return 0; //That is unlikely to happen
+//
+//	++g_num_calc;
+//
+//	for(u32 i = 0; i < MAP_SIZE; ++i)
+//		if( (q->trace_mini[i>>3] & (1<<(i&7))) && g_cov_count[i] ){
+//			score += 65536.0 * ( g_nb_count[i] + 1.0 ) / g_cov_count[i];
+//		}
+//
+//	return score;
+//}
 
 #endif
 
@@ -1179,10 +1180,10 @@ static inline u8 has_new_path(/*u32 cksum*/) {
 /* Count the number of bits set in the provided bitmap. Used for the status
    screen several times every second, does not have to be fast. */
 
-static u32 count_bits(u8* mem) {
+static u32 count_bits(u8* mem, u32 len) {
 
   u32* ptr = (u32*)mem;
-  u32  i   = (MAP_SIZE >> 2);
+  u32  i   = (len >> 2);
   u32  ret = 0;
 
   while (i--) {
@@ -1556,7 +1557,7 @@ static void cull_queue(void) {
   pending_favored = 0;
 
   // PATHAFL
-	if (queue_cur && g_edge_info_num) {
+	if (queue_cur && g_edge_info_num && queued_paths > 200) {
 
 		// a seed is selected before next_id or queue_cur. note: queue_cur maybe greater than next_id--------
 		for (q = queue; q != queue_cur; q = q->next) {
@@ -1597,20 +1598,20 @@ static void cull_queue(void) {
 
 		if (count) {
 
-			if (count > 500) {
+			if ( count > (queued_paths>>3) ) {
 				flag = sum / count;
 				//flag += (max - flag) / 5;
 				g_neighbor_avg  = flag;
 				g_neighbor_high = flag + (max - flag) / 3;
 			}
 
-			AFL_LOG("cur=%d count=%d avg=%d high=%d ", queue_cur->id, count, flag, g_neighbor_high);
+			AFL_LOG("cur=%d count=%d avg=%d high=%d ", queue_cur->id, count, g_neighbor_avg, g_neighbor_high);
 
 			count_array = count;
 			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_neigbhor_score);
 
 			count = 0;
-			u32 untounch_edge = count_bits(virgin_bits);
+			u32 untounch_edge = MAP_SIZE - count_non_255_bytes(virgin_bits);
 			for (i = 0; i < count_array; i++) {
 
 				q = array_entry[i];
@@ -1618,37 +1619,37 @@ static void cull_queue(void) {
 					continue;
 
 				j = MAP_SIZE >> 3;
-				u8 select = 0;
-
 				while (j--)
 					if ( (temp_v[j] & ~q->trace_mini[j]) != temp_v[j] ) { // has new covarage, set favored
-						select = 1;	++j;
+						q->favored = 1;		++j;
 						break;
 					}
 
-				if (!select ) continue;
+				if ( !q->favored ) continue;
 
 				while (j--)
 					temp_v[j] &= ~q->trace_mini[j];
 
-				q->favored = 1;
 				queued_favored++;
 
 				if (!q->was_fuzzed) ++pending_favored;
 
-				if (++count <= 8)
+				if (++count <= 3 || i >= count_array - 3)
 					AFL_LOG("%d-%d ", q->id, q->neigbhor);
 
-				if ( (i & 0xF) == 0xF && count_bits(temp_v) == untounch_edge)
+				if ( (i & 0xF) == 0xF && count_bits(temp_v, sizeof(temp_v)) == untounch_edge){
 					break;
+				}
 
 			} // end of for (i = 0; i < count; i++)
 
 			ck_free(array_entry);
 
+			if (count_bits(temp_v, sizeof(temp_v)) != untounch_edge)
+				AFL_LOG("virgin=%d temp_v=%d ", untounch_edge, count_bits(temp_v, sizeof(temp_v)));
+
 			time_cumulative += get_cur_time() - time_start;
-			//AFL_LOG("calc_cur=%lld calc=%lld ", g_num_calc_cur, g_num_calc);
-			AFL_LOG("i=%d fav=%d time=%llus\n", i, count, time_cumulative / 1000);
+			AFL_LOG("i=%d fav=%d time=%llds\n", i, count, time_cumulative / 1000);
 		}
 
 	} else { // if (queue_cur && g_edge_info_num)
@@ -3513,7 +3514,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       if ( FAULT_TMOUT == fault 			// path_hash is inaccurate when timeout.
       		|| queue_cur->var_behavior	// if path is variable, meybe often appear new path_hash, skip.
       		|| g_consecutive_pat >= 2		// 2 consecutive pat files
-					|| queued_paths < 500
+					|| queued_paths < 200
       		|| g_new_paths >= queued_paths * g_new_paths_ratio / (100+g_new_paths_ratio)
 					// || get_cur_ms() - last_path_time < 3000  // need last org afl path time
       		// || R(100) < 67
@@ -4389,7 +4390,7 @@ static void show_stats(void) {
 
   /* Compute some mildly useful bitmap stats. */
 
-  t_bits = (MAP_SIZE << 3) - count_bits(virgin_bits);
+  t_bits = (MAP_SIZE << 3) - count_bits(virgin_bits, sizeof(virgin_bits));
 
   /* Now, for the visuals... */
 
@@ -5172,14 +5173,14 @@ static u32 calculate_score(struct queue_entry* q) {
 
   /* PATHAFL. Adjust score based on edge score. */
 
-//  if (0xFFFFFFFF != g_neighbor_avg) {
-//		if (q->neigbhor * 0.7 > g_neighbor_avg) perf_score *= 3;
-//		else if (q->neigbhor * 0.8 > g_neighbor_avg) perf_score *= 2;
-//		else if (q->neigbhor * 0.9 > g_neighbor_avg) perf_score *= 1.5;
-//		else if (q->neigbhor * 1.5 < g_neighbor_avg) perf_score *= 0.25;
-//		else if (q->neigbhor * 1.3 < g_neighbor_avg) perf_score *= 0.5;
-//		else if (q->neigbhor * 1.1 < g_neighbor_avg) perf_score *= 0.75;
-//  }
+  if (g_power_schedule && 0xFFFFFFFF != g_neighbor_avg) {
+  	perf_score *= 0.8;
+		if (q->neigbhor * 0.7 > g_neighbor_avg) perf_score *= 3;
+		else if (q->neigbhor * 0.8 > g_neighbor_avg) perf_score *= 2;
+		else if (q->neigbhor * 0.9 > g_neighbor_avg) perf_score *= 1.5;
+		else if (q->neigbhor * 1.3 < g_neighbor_avg) perf_score *= 0.7;
+		else if (q->neigbhor * 1.1 < g_neighbor_avg) perf_score *= 0.9;
+  }
 
 
   /* Adjust score based on handicap. Handicap is proportional to how late
@@ -8229,7 +8230,7 @@ int main(int argc, char** argv) {
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
 #if (defined _2_GUIDED_NEIGHBOR) || (defined _1_PATH_HASH)
-  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qvh:r:g:")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:QPvh:r:g:")) > 0)
 #else
   while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Q")) > 0)
 #endif
@@ -8402,6 +8403,10 @@ int main(int argc, char** argv) {
 
       case 'v':
       	verbose_mode = 1;
+      	break;
+
+      case 'P': //Power Schedules
+      	g_power_schedule = 1;
       	break;
 
 #ifdef _1_PATH_HASH
