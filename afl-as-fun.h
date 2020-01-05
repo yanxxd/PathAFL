@@ -158,7 +158,7 @@ static const u8* trampoline_fmt_64_fun =
 	"pushq %%rbx\n"
 	"pushq %%rcx\n"
 	"pushq $0x%08x\n"								// z
-	"movq  $0, %%rcx\n"							// x
+	"movq  $1, %%rcx\n"							// x
 	"movq  $0x%08x, %%rbx\n"				// rid
 	"call __afl_maybe_log_fun\n"
 	"popq %%rcx\n"
@@ -459,14 +459,14 @@ static const u8* main_payload_64_fun =
 
 #ifdef _3_COLLAFL
 #ifdef _1_PATH_HASH
-  "  addq  %rbx, 65536(%rdx)\n"
+  "  xorq  %rbx, 65536(%rdx)\n"
 #endif
 	"  cmpq  $0xFF, %rcx\n"									// x = rcx
 	"  jne   __collafl_fmul_fun\n"							// x != 0xFF		unlikely
 
 //"  __collafl_single_fun:\n"
 	"  movq  32(%rsp), %rdi\n"								// z -> rdi
-	"  mov   $1,  %cl\n"											// y -> rcx
+	"  mov   $0,  %cl\n"											// y -> rcx
 	"  shrq  %cl, %rbx\n"										// cur >> y  -> rbx
 	"  movq  %rbx, __afl_prev_loc(%rip)\n"	// cur >> y  -> prev
 
@@ -474,7 +474,7 @@ static const u8* main_payload_64_fun =
 	"  incb (%rdx, %rdi, 1)\n"
 #else
 #ifdef _1_PATH_HASH
-  "  addq %rcx, 65536(%rdx)\n"
+  "  xorq %rcx, 65536(%rdx)\n"
 #endif
 #ifndef COVERAGE_ONLY
   "  xorq __afl_prev_loc(%rip), %rcx\n"
@@ -511,7 +511,7 @@ static const u8* main_payload_64_fun =
 	"  movq  %rbx, %rdi\n"									// cur -> rdi
 	"  shrq  %cl, %rdi\n"										// cur >> x -> rdi
 	"  xorq  __afl_prev_loc(%rip), %rdi\n" 	// (cur >> x) ^ (prev >> y) -> rdi
-	"  mov   $1, %cl\n"											// y -> rcx
+	"  mov   $0, %cl\n"											// y -> rcx
 	"  shrq  %cl, %rbx\n"										// cur >> y  -> rbx
 	"  movq  %rbx, __afl_prev_loc(%rip)\n"	// cur >> y  -> prev
 	"  addq  32(%rsp), %rdi\n" 							// (cur >> x) ^ (prev >> y) + z  -> rbx

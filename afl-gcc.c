@@ -101,7 +101,7 @@ static void find_as(u8* argv0) {
   }
 
   FATAL("Unable to find AFL wrapper binary for 'as'. Please set AFL_PATH");
- 
+
 }
 
 

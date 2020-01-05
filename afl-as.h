@@ -221,7 +221,7 @@ static const u8* trampoline_fmt_64 =
 	"pushq %%rbx\n"
 	"pushq %%rcx\n"
 	"pushq $0x%08x\n"								// z
-	"movq  $0, %%rcx\n"							// x
+	"movq  $1, %%rcx\n"							// x
 	"movq  $0x%08x, %%rbx\n"
   "call __afl_maybe_log\n"
 	"popq %%rcx\n"
@@ -548,7 +548,7 @@ static const u8* main_payload_64 =
 	"\n"
   "  __collafl_single:\n"
 	"\n"
-	"  mov   $1,  %cl\n"											// y -> rcx
+	"  mov   $0,  %cl\n"											// y -> rcx
 	"  shrq  %cl, %rbx\n"										// cur >> y  -> rbx
 	"  movq  %rbx, __afl_prev_loc(%rip)\n"	// cur >> y  -> prev
 
@@ -590,7 +590,7 @@ static const u8* main_payload_64 =
 	"  movq  %rbx, %rdi\n"									// cur -> rdi
 	"  shrq  %cl, %rdi\n"										// cur >> x -> rdi
 	"  xorq  __afl_prev_loc(%rip), %rdi\n" 	// (cur >> x) ^ (prev >> y) -> rdi
-	"  mov   $1, %cl\n"											// y -> rcx
+	"  mov   $0, %cl\n"											// y -> rcx
 	"  shrq  %cl, %rbx\n"										// cur >> y  -> rbx
 	"  movq  %rbx, __afl_prev_loc(%rip)\n"	// cur >> y  -> prev
 	"  addq  32(%rsp), %rdi\n" 							// (cur >> x) ^ (prev >> y) + z  -> rbx

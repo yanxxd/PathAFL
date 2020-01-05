@@ -124,7 +124,7 @@ EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
            deferred_mode,             /* Deferred forkserver mode?        */
            fast_cal,                  /* Try to calibrate faster?         */
            verbose_mode,              /* Running in verbose mode?         */
-					 g_power_schedule;					/* Power Schedule	like AFLFast			*/
+					 g_power_schedule = 1;			/* Power Schedule	like AFLFast			*/
 
 static s32 out_fd,                    /* Persistent fd for out_file       */
            dev_urandom_fd = -1,       /* Persistent fd for /dev/urandom   */
@@ -294,9 +294,10 @@ static s16 interesting_16[] = { INTERESTING_8, INTERESTING_16 };
 static s32 interesting_32[] = { INTERESTING_8, INTERESTING_16, INTERESTING_32 };
 
 #ifdef _1_PATH_HASH
-static u32 g_new_paths_ratio = 0;			// percentage of new paths, default 0%
+static u32 g_new_paths_ratio = 50;				// percentage of new paths, default 0%
 static u32 g_new_paths;
-static u8  g_consecutive_pat = 0;					// Number of consecutive pat files?
+static u8  g_consecutive_pat = 0;					// current number of consecutive pat files.
+static u8  g_param_consecutive_pat = 3;		// Number of consecutive pat files. default 3.
 static struct queue_entry* g_path_hash[MAP_SIZE] = {0};
 //static u32 g_cov_count[MAP_SIZE]; 		// EDGE_HEAT. Log count of testcases which coverage edge i.	*/
 #endif
@@ -387,11 +388,13 @@ struct edge_neighbor *g_edge_info = NULL;		// array
 u32 g_edge_info_num = 0;					// numbuer of elements in g_edge_info
 u32 g_edge_info_index[MAP_SIZE];	// edge's initial index in g_edge_info
 u16 g_guide_type = 1;							// neighbor guided type. 0:only count child  1:+call  2:+call+mem. default 1
+u16 g_begin_num = 500;						// begin add h-path to queue. if 0, don't filter h-path, add all h-path.
+u8 g_weight_high_param = 3;				// g_weight_high = avg + (max - avg) / g_weight_high_param
 
 u32 g_nb_count[MAP_SIZE]; 				// untouched neighbor count of edge
 
-u32 g_neighbor_high = 0xFFFFFFFF;	// if score of path is larger than this value, add it to queue.
-u32 g_neighbor_avg  = 0xFFFFFFFF;	// avarage edge score.
+u32 g_weight_high = 0xFFFFFFFF;	// if score of path is larger than this value, add it to queue.
+u32 g_weight_avg  = 0xFFFFFFFF;	// avarage edge score.
 
 static int load_edge_neighbor_file(char *fn) {
 
@@ -1547,7 +1550,7 @@ static void cull_queue(void) {
   static u8 temp_v[MAP_SIZE >> 3];
   u32 i, j;
 
-  if (dumb_mode || !score_changed) return;
+  if (dumb_mode || !score_changed || !queue_cur) return;
 
   score_changed = 0;
 
@@ -1557,9 +1560,15 @@ static void cull_queue(void) {
   pending_favored = 0;
 
   // PATHAFL
-	if (queue_cur && g_edge_info_num && queued_paths > 200) {
+	if (queue_cur && g_edge_info_num && queued_paths > g_begin_num) {
 
-		// a seed is selected before next_id or queue_cur. note: queue_cur maybe greater than next_id--------
+		u32 flag = 0;
+		u32 max = 0;
+		u32 sum = 0;
+		u32 count = 0;
+		static u64 time_cumulative = 0;
+		u64 time_start = get_cur_time();
+
 		for (q = queue; q != queue_cur; q = q->next) {
 
 			if (!q->favored)
@@ -1570,13 +1579,6 @@ static void cull_queue(void) {
 				if (q->trace_mini[j])
 					temp_v[j] &= ~q->trace_mini[j];
 		}
-
-		u32 flag = 0;
-		u32 max = 0;
-		u32 sum = 0;
-		u32 count = 0;
-		static u64 time_cumulative = 0;
-		u64 time_start = get_cur_time();
 
 		struct queue_entry **array_entry = (struct queue_entry**)ck_alloc(sizeof(struct queue_entry*)
 				* (queued_paths + g_new_paths) );
@@ -1601,11 +1603,11 @@ static void cull_queue(void) {
 			if ( count > (queued_paths>>3) ) {
 				flag = sum / count;
 				//flag += (max - flag) / 5;
-				g_neighbor_avg  = flag;
-				g_neighbor_high = flag + (max - flag) / 3;
+				g_weight_avg  = flag;
+				g_weight_high = flag + (max - flag) / g_weight_high_param;
 			}
 
-			AFL_LOG("cur=%d count=%d avg=%d high=%d ", queue_cur->id, count, g_neighbor_avg, g_neighbor_high);
+			AFL_LOG("cur=%d count=%d avg=%d high=%d ", queue_cur->id, count, g_weight_avg, g_weight_high);
 
 			count_array = count;
 			qsort(array_entry, count_array, sizeof(struct queue_entry*), compare_neigbhor_score);
@@ -3510,31 +3512,24 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       if (crash_mode) total_crashes++;
 
 #ifdef _1_PATH_HASH
-      // Don't have new bit. Judging whether there is a new path ?
-      if ( FAULT_TMOUT == fault 			// path_hash is inaccurate when timeout.
-      		|| queue_cur->var_behavior	// if path is variable, meybe often appear new path_hash, skip.
-      		|| g_consecutive_pat >= 2		// 2 consecutive pat files
-					|| queued_paths < 200
-      		|| g_new_paths >= queued_paths * g_new_paths_ratio / (100+g_new_paths_ratio)
-					// || get_cur_ms() - last_path_time < 3000  // need last org afl path time
-      		// || R(100) < 67
-					)
-      	return 0;
-
-      // check hash when time interval > 3s and don't find new paths
-//      static u32 last_paths_num = 0;
-//
-//      if (last_paths_num != g_new_paths + queued_paths){ // found new path with cov
-//      	last_paths_num = g_new_paths + queued_paths;
-//      	return 0;
-//      }
-
+      if ( g_begin_num )
+      	// Don't have new bit. Judging whether there is a new path ?
+				if ( FAULT_TMOUT == fault 		  // path_hash is inaccurate when timeout.
+						|| queue_cur->var_behavior	// if path is variable, meybe often appear new path_hash, skip.
+						|| g_consecutive_pat >= g_param_consecutive_pat   // 3 consecutive pat files.
+						|| queued_paths < g_begin_num
+						|| g_new_paths >= queued_paths * g_new_paths_ratio / (100+g_new_paths_ratio)
+						// || get_cur_ms() - last_path_time < 3000  // need last org afl path time
+						// || R(100) < 67
+						)
+					return 0;
 
       if ( !has_new_path() ) return 0;
 
-      if ( /*count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries
-      		||*/ calc_cur_path_neighbor() < g_neighbor_high )
-      	return 0;
+      if ( g_begin_num && g_edge_info_num)
+				if ( //count_bytes(trace_bits) < total_bitmap_size / total_bitmap_entries ||
+						 calc_cur_path_neighbor() < g_weight_high )
+					return 0;
 
       ++g_new_paths;
       //++last_paths_num;
@@ -5173,13 +5168,13 @@ static u32 calculate_score(struct queue_entry* q) {
 
   /* PATHAFL. Adjust score based on edge score. */
 
-  if (g_power_schedule && 0xFFFFFFFF != g_neighbor_avg) {
+  if (g_power_schedule && 0xFFFFFFFF != g_weight_avg) {
   	perf_score *= 0.8;
-		if (q->neigbhor * 0.7 > g_neighbor_avg) perf_score *= 3;
-		else if (q->neigbhor * 0.8 > g_neighbor_avg) perf_score *= 2;
-		else if (q->neigbhor * 0.9 > g_neighbor_avg) perf_score *= 1.5;
-		else if (q->neigbhor * 1.3 < g_neighbor_avg) perf_score *= 0.7;
-		else if (q->neigbhor * 1.1 < g_neighbor_avg) perf_score *= 0.9;
+		if (q->neigbhor * 0.7 > g_weight_avg) perf_score *= 3;
+		else if (q->neigbhor * 0.8 > g_weight_avg) perf_score *= 2;
+		else if (q->neigbhor * 0.9 > g_weight_avg) perf_score *= 1.5;
+		else if (q->neigbhor * 1.3 < g_weight_avg) perf_score *= 0.7;
+		else if (q->neigbhor * 1.1 < g_weight_avg) perf_score *= 0.9;
   }
 
 
@@ -7562,12 +7557,15 @@ static void usage(u8* argv0) {
 
 #ifdef _1_PATH_HASH
   		 "  -r ratio      - percentage of new paths, default 50%% \n"
- 		   "  -v            - verbose mode \n"
+ 		   "  -v            - verbose mode, default 0 \n"
+		   "  -p            - disable power schedule. default enable. \n"
+		   "  -b num        - add h-path to queue when seeds_num > num , default 500 \n"
+		   "  -w w          - weight_high = avg + (max - avg) / w , default 3 \n"
 #endif
 
 #ifdef _2_GUIDED_NEIGHBOR
   		 "  -h name       - neighbor info file \n"
-  		 "  -g type       - neighbor guided type. 0:only count child  1:+call  2:+call+mem. default 1 \n\n"
+  		 "  -g type       - neighbor guided type. 0:only count child  1:+call  2:+call+mem. default 1. \n\n"
 #endif
 
        "For additional tips, please consult %s/README.\n\n",
@@ -8230,7 +8228,7 @@ int main(int argc, char** argv) {
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
 #if (defined _2_GUIDED_NEIGHBOR) || (defined _1_PATH_HASH)
-  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:QPvh:r:g:")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Qpvh:r:g:b:w:c:")) > 0)
 #else
   while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Q")) > 0)
 #endif
@@ -8405,13 +8403,25 @@ int main(int argc, char** argv) {
       	verbose_mode = 1;
       	break;
 
-      case 'P': //Power Schedules
-      	g_power_schedule = 1;
+      case 'p': //Power Schedules
+      	g_power_schedule = 0;
       	break;
 
 #ifdef _1_PATH_HASH
       case 'r':
       	g_new_paths_ratio = atoi(optarg);
+      	break;
+
+      case 'b':
+      	g_begin_num = atoi(optarg);
+      	break;
+
+      case 'w':
+      	g_weight_high_param = atoi(optarg);
+      	break;
+
+      case 'c':
+      	g_param_consecutive_pat = atoi(optarg);
       	break;
 #endif
 
@@ -8420,6 +8430,7 @@ int main(int argc, char** argv) {
       case 'h':
         if (fn_neighbor) FATAL("Multiple -x options not supported");
         fn_neighbor = optarg;
+        fast_cal = 1;
       	break;
 
       case 'g':

@@ -287,7 +287,7 @@ static void add_instrumentation(void) {
 #endif
 
 #ifdef _3_COLLAFL
-      fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
+      fprintf(outf, use_64bit ? trampoline_fmt_64_fun : trampoline_fmt_32_fun,
       		256+R(MAP_SIZE-256), R(MAP_SIZE));
 #else
       fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
@@ -420,7 +420,7 @@ static void add_instrumentation(void) {
 #endif
 
 #ifdef _3_COLLAFL
-				fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
+				fprintf(outf, use_64bit ? trampoline_fmt_64_fun : trampoline_fmt_32_fun,
 						256+R(MAP_SIZE-256), R(MAP_SIZE));
 #else
 				fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
