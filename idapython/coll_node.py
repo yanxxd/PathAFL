@@ -38,7 +38,7 @@ g_size_ins_block = 0x38
 # offset of random in mov ins
 g_off_random = 3
 # MAPSIZE bits of afl-fuzz
-g_map_size = 17
+g_map_size = 16
 # offset of x from head
 g_off_x = 7
 # offset of z from head
