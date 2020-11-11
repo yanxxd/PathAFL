@@ -19,7 +19,7 @@
   url       = {https://doi.org/10.1145/3320269.3384736},
   doi       = {10.1145/3320269.3384736},
   timestamp = {Tue, 13 Oct 2020 16:07:41 +0200},
-  biburl    = {https://dblp.org/rec/conf/ccs/YanWLSJ20.bib},
+  biburl    = {https://dblp.org/rec/conf/ccs/YanWLSJ20.bib},```
   bibsource = {dblp computer science bibliography, https://dblp.org}
 }
 
@@ -47,7 +47,7 @@ make: *** [Makefile:92: test_build] Error 2
 因为修改了afl-as，导致编译.test-instr0时会报错，这是正常的，不用管它。
 
 # 2. make binary
-以[edge.c](test/test1/edge.c)为例
+以[edge.c](experimental/test1/edge.c)为例
 ```
 # CC=afl-gcc
 # afl-gcc edge.c -o edge-pat
